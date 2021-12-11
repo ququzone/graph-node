@@ -802,6 +802,8 @@ pub enum StoreError {
     Canceled,
     #[error("database unavailable")]
     DatabaseUnavailable,
+    #[error("subgraph writer poisoned by previous error")]
+    Poisoned,
 }
 
 // Convenience to report a constraint violation
@@ -851,6 +853,7 @@ impl From<std::fmt::Error> for StoreError {
     }
 }
 
+#[derive(Clone)]
 pub struct StoredDynamicDataSource {
     pub name: String,
     pub source: Source,
@@ -1105,6 +1108,9 @@ pub trait WritableStore: Send + Sync + 'static {
     async fn health(&self, id: &DeploymentHash) -> Result<SubgraphHealth, StoreError>;
 
     fn input_schema(&self) -> Arc<Schema>;
+
+    /// Wait for the background writer to finish processing its queue
+    async fn wait(&self) -> Result<(), StoreError>;
 }
 
 #[async_trait]
@@ -1342,6 +1348,14 @@ impl EntityModification {
         use EntityModification::*;
         match self {
             Insert { key, .. } | Overwrite { key, .. } | Remove { key } => key,
+        }
+    }
+
+    pub fn entity(&self) -> Option<&Entity> {
+        match self {
+            EntityModification::Insert { data, .. }
+            | EntityModification::Overwrite { data, .. } => Some(data),
+            EntityModification::Remove { .. } => None,
         }
     }
 

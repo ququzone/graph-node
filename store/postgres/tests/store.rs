@@ -140,8 +140,10 @@ where
             .await
             .expect("we can get a writable store");
 
-        // Run test
-        test(store, writable, deployment).await
+        // Run test and wait for the background writer to finish its work so
+        // it won't conflict with the next test
+        test(store, writable.clone(), deployment).await;
+        writable.wait().await.unwrap();
     });
 }
 
@@ -236,7 +238,7 @@ async fn insert_test_data(store: Arc<DieselSubgraphStore>) -> DeploymentLocator 
         false,
         None,
     );
-    transact_entity_operations(
+    transact_and_wait(
         &store,
         &deployment,
         TEST_BLOCK_2_PTR.clone(),
@@ -314,7 +316,7 @@ fn delete_entity() {
         writable.get(&entity_key).unwrap().unwrap();
 
         let count = get_entity_count(store.clone(), &&deployment.hash);
-        transact_entity_operations(
+        transact_and_wait(
             &store.subgraph_store(),
             &deployment,
             TEST_BLOCK_3_PTR.clone(),
@@ -411,7 +413,7 @@ fn insert_entity() {
             Some("green"),
         );
         let count = get_entity_count(store.clone(), &&deployment.hash);
-        transact_entity_operations(
+        transact_and_wait(
             &store.subgraph_store(),
             &deployment,
             TEST_BLOCK_3_PTR.clone(),
@@ -1056,7 +1058,7 @@ fn revert_block_with_delete() {
         let del_key = EntityKey::data(deployment.hash.clone(), USER.to_owned(), "2".to_owned());
 
         // Process deletion
-        transact_entity_operations(
+        transact_and_wait(
             &store.subgraph_store(),
             &deployment,
             TEST_BLOCK_3_PTR.clone(),
@@ -1568,6 +1570,7 @@ fn handle_large_string_with_index() {
             )
             .await
             .expect("Failed to insert large text");
+        writable.wait().await.unwrap();
 
         let query = user_query()
             .first(5)
@@ -1759,7 +1762,7 @@ fn window() {
     ];
 
     run_test(|store, _, deployment| async move {
-        transact_entity_operations(
+        transact_and_wait(
             &store.subgraph_store(),
             &deployment,
             TEST_BLOCK_3_PTR.clone(),
@@ -1900,7 +1903,7 @@ fn reorg_tracking() {
             false,
             None,
         );
-        transact_entity_operations(store, deployment, block.clone(), vec![test_entity_1])
+        transact_and_wait(store, deployment, block.clone(), vec![test_entity_1])
             .await
             .unwrap();
     }
@@ -1930,7 +1933,7 @@ fn reorg_tracking() {
         check_state!(store, 0, 0, 2);
 
         // Jump to block 4
-        transact_entity_operations(
+        transact_and_wait(
             &subgraph_store,
             &deployment,
             TEST_BLOCK_4_PTR.clone(),

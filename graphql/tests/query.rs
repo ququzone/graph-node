@@ -31,9 +31,8 @@ use graph::{
 use graph_graphql::{prelude::*, subscription::execute_subscription};
 use test_store::{
     deployment_state, execute_subgraph_query_with_complexity, execute_subgraph_query_with_deadline,
-    result_size_metrics, revert_block, run_test_sequentially, transact_entity_operations,
-    transact_errors, Store, BLOCK_ONE, GENESIS_PTR, LOAD_MANAGER, LOGGER, METRICS_REGISTRY, STORE,
-    SUBSCRIPTION_MANAGER,
+    result_size_metrics, revert_block, run_test_sequentially, transact_errors, Store, BLOCK_ONE,
+    GENESIS_PTR, LOAD_MANAGER, LOGGER, METRICS_REGISTRY, STORE, SUBSCRIPTION_MANAGER,
 };
 
 const NETWORK_NAME: &str = "fake_network";
@@ -232,7 +231,7 @@ async fn insert_test_entities(
             data,
         });
 
-        transact_entity_operations(
+        test_store::transact_and_wait(
             &STORE.subgraph_store(),
             &deployment,
             block_ptr,
@@ -1643,7 +1642,7 @@ fn query_detects_reorg() {
         // We move the subgraph head forward, which will execute the query at block 1
         // But the state we have is also for block 1, but with a smaller reorg count
         // and we therefore report an error
-        transact_entity_operations(
+        test_store::transact_and_wait(
             &STORE.subgraph_store(),
             &deployment,
             BLOCK_ONE.clone(),
@@ -1651,6 +1650,7 @@ fn query_detects_reorg() {
         )
         .await
         .unwrap();
+
         let result = execute_query_document(&deployment.hash, query.clone()).await;
         match result.to_result().unwrap_err()[0] {
             QueryError::ExecutionError(QueryExecutionError::DeploymentReverted) => { /* expected */

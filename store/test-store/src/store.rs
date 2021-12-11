@@ -205,6 +205,7 @@ pub fn remove_subgraph(id: &DeploymentHash) {
     }
 }
 
+/// Transact errors for this block and wait until changes have been written
 pub async fn transact_errors(
     store: &Arc<Store>,
     deployment: &DeploymentLocator,
@@ -229,7 +230,8 @@ pub async fn transact_errors(
             Vec::new(),
             errs,
         )
-        .await
+        .await?;
+    wait(deployment).await
 }
 
 /// Convenience to transact EntityOperation instead of EntityModification
@@ -241,6 +243,24 @@ pub async fn transact_entity_operations(
 ) -> Result<(), StoreError> {
     transact_entities_and_dynamic_data_sources(store, deployment.clone(), block_ptr_to, vec![], ops)
         .await
+}
+
+/// Convenience to transact EntityOperation instead of EntityModification and wait for the store to process the operations
+pub async fn transact_and_wait(
+    store: &Arc<DieselSubgraphStore>,
+    deployment: &DeploymentLocator,
+    block_ptr_to: BlockPtr,
+    ops: Vec<EntityOperation>,
+) -> Result<(), StoreError> {
+    transact_entities_and_dynamic_data_sources(
+        store,
+        deployment.clone(),
+        block_ptr_to,
+        vec![],
+        ops,
+    )
+    .await?;
+    wait(deployment).await
 }
 
 pub async fn transact_entities_and_dynamic_data_sources(
@@ -276,6 +296,7 @@ pub async fn transact_entities_and_dynamic_data_sources(
         .await
 }
 
+/// Revert to block `ptr` and wait for the store to process the changes
 pub async fn revert_block(store: &Arc<Store>, deployment: &DeploymentLocator, ptr: &BlockPtr) {
     store
         .subgraph_store()
@@ -285,6 +306,7 @@ pub async fn revert_block(store: &Arc<Store>, deployment: &DeploymentLocator, pt
         .revert_block_operations(ptr.clone(), None)
         .await
         .unwrap();
+    wait(deployment).await.unwrap();
 }
 
 pub fn insert_ens_name(hash: &str, name: &str) {
@@ -301,6 +323,8 @@ pub fn insert_ens_name(hash: &str, name: &str) {
         .unwrap();
 }
 
+/// Insert the given entities and wait until all writes have been processed.
+/// The inserts all happen at `GENESIS_PTR`, i.e., block 0
 pub async fn insert_entities(
     deployment: &DeploymentLocator,
     entities: Vec<(EntityType, Entity)>,
@@ -322,8 +346,19 @@ pub async fn insert_entities(
         GENESIS_PTR.clone(),
         insert_ops.collect::<Vec<_>>(),
     )
-    .await
-    .map(|_| ())
+    .await?;
+
+    wait(deployment).await
+}
+
+/// Wait until all pending writes have been processed
+pub async fn wait(deployment: &DeploymentLocator) -> Result<(), StoreError> {
+    let writable = SUBGRAPH_STORE
+        .cheap_clone()
+        .writable(LOGGER.clone(), deployment.id)
+        .await
+        .expect("we can get a writable");
+    writable.wait().await
 }
 
 /// Tap into store events sent when running `f` and return those events. This

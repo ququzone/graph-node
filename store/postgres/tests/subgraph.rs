@@ -428,7 +428,7 @@ fn version_info() {
 
     run_test_sequentially(|store| async move {
         let deployment = setup();
-        transact_entity_operations(
+        transact_and_wait(
             &store.subgraph_store(),
             &deployment,
             BLOCK_ONE.clone(),
@@ -575,7 +575,7 @@ fn fail_unfail_deterministic_error() {
             .unwrap();
 
         // Process the first block.
-        transact_entity_operations(
+        transact_and_wait(
             &store.subgraph_store(),
             &deployment,
             BLOCKS[0].clone(),
@@ -592,7 +592,7 @@ fn fail_unfail_deterministic_error() {
         assert_eq!(Some(0), vi.latest_ethereum_block_number);
 
         // Process the second block.
-        transact_entity_operations(
+        transact_and_wait(
             &store.subgraph_store(),
             &deployment,
             BLOCKS[1].clone(),
@@ -667,7 +667,7 @@ fn fail_unfail_deterministic_error_noop() {
         };
 
         // Process the first block.
-        transact_entity_operations(
+        transact_and_wait(
             &store.subgraph_store(),
             &deployment,
             BLOCKS[0].clone(),
@@ -684,7 +684,7 @@ fn fail_unfail_deterministic_error_noop() {
         assert_eq!(Some(0), vi.latest_ethereum_block_number);
 
         // Process the second block.
-        transact_entity_operations(
+        transact_and_wait(
             &store.subgraph_store(),
             &deployment,
             BLOCKS[1].clone(),
@@ -797,7 +797,7 @@ fn fail_unfail_non_deterministic_error() {
         };
 
         // Process the first block.
-        transact_entity_operations(
+        transact_and_wait(
             &store.subgraph_store(),
             &deployment,
             BLOCKS[0].clone(),
@@ -838,7 +838,7 @@ fn fail_unfail_non_deterministic_error() {
         assert_eq!(Some(0), vi.latest_ethereum_block_number);
 
         // Process the second block.
-        transact_entity_operations(
+        transact_and_wait(
             &store.subgraph_store(),
             &deployment,
             BLOCKS[1].clone(),
@@ -887,7 +887,7 @@ fn fail_unfail_non_deterministic_error_noop() {
         };
 
         // Process the first block.
-        transact_entity_operations(
+        transact_and_wait(
             &store.subgraph_store(),
             &deployment,
             BLOCKS[0].clone(),
@@ -904,7 +904,7 @@ fn fail_unfail_non_deterministic_error_noop() {
         assert_eq!(Some(0), vi.latest_ethereum_block_number);
 
         // Process the second block.
-        transact_entity_operations(
+        transact_and_wait(
             &store.subgraph_store(),
             &deployment,
             BLOCKS[1].clone(),
