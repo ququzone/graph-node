@@ -819,7 +819,7 @@ async fn ens_name_by_hash_v0_0_5() {
     test_ens_name_by_hash(API_VERSION_0_0_5);
 }
 
-fn test_entity_store(api_version: Version) {
+async fn test_entity_store(api_version: Version) {
     let (mut module, store, deployment) = test_valid_module_and_store(
         "entityStore",
         mock_data_source(
@@ -840,6 +840,7 @@ fn test_entity_store(api_version: Version) {
         &deployment,
         vec![(user_type.clone(), alex), (user_type, steve)],
     )
+    .await
     .unwrap();
 
     let get_user = move |module: &mut WasmInstance<Chain>, id: &str| -> Option<Entity> {
@@ -914,12 +915,12 @@ fn test_entity_store(api_version: Version) {
 
 #[tokio::test]
 async fn entity_store_v0_0_4() {
-    test_entity_store(API_VERSION_0_0_4);
+    test_entity_store(API_VERSION_0_0_4).await;
 }
 
 #[tokio::test]
 async fn entity_store_v0_0_5() {
-    test_entity_store(API_VERSION_0_0_5);
+    test_entity_store(API_VERSION_0_0_5).await;
 }
 
 fn test_detect_contract_calls(api_version: Version) {

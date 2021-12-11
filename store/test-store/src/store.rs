@@ -229,19 +229,21 @@ pub async fn transact_errors(
             Vec::new(),
             errs,
         )
+        .await
 }
 
 /// Convenience to transact EntityOperation instead of EntityModification
-pub fn transact_entity_operations(
+pub async fn transact_entity_operations(
     store: &Arc<DieselSubgraphStore>,
     deployment: &DeploymentLocator,
     block_ptr_to: BlockPtr,
     ops: Vec<EntityOperation>,
 ) -> Result<(), StoreError> {
     transact_entities_and_dynamic_data_sources(store, deployment.clone(), block_ptr_to, vec![], ops)
+        .await
 }
 
-pub fn transact_entities_and_dynamic_data_sources(
+pub async fn transact_entities_and_dynamic_data_sources(
     store: &Arc<DieselSubgraphStore>,
     deployment: DeploymentLocator,
     block_ptr_to: BlockPtr,
@@ -262,14 +264,16 @@ pub fn transact_entities_and_dynamic_data_sources(
         deployment.hash.clone(),
         metrics_registry.clone(),
     );
-    store.transact_block_operations(
-        block_ptr_to,
-        None,
-        mods,
-        stopwatch_metrics,
-        data_sources,
-        Vec::new(),
-    )
+    store
+        .transact_block_operations(
+            block_ptr_to,
+            None,
+            mods,
+            stopwatch_metrics,
+            data_sources,
+            Vec::new(),
+        )
+        .await
 }
 
 pub async fn revert_block(store: &Arc<Store>, deployment: &DeploymentLocator, ptr: &BlockPtr) {
@@ -279,6 +283,7 @@ pub async fn revert_block(store: &Arc<Store>, deployment: &DeploymentLocator, pt
         .await
         .expect("can get writable")
         .revert_block_operations(ptr.clone(), None)
+        .await
         .unwrap();
 }
 
@@ -296,7 +301,7 @@ pub fn insert_ens_name(hash: &str, name: &str) {
         .unwrap();
 }
 
-pub fn insert_entities(
+pub async fn insert_entities(
     deployment: &DeploymentLocator,
     entities: Vec<(EntityType, Entity)>,
 ) -> Result<(), StoreError> {
@@ -317,6 +322,7 @@ pub fn insert_entities(
         GENESIS_PTR.clone(),
         insert_ops.collect::<Vec<_>>(),
     )
+    .await
     .map(|_| ())
 }
 

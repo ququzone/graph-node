@@ -98,7 +98,7 @@ where
         remove_test_data(store.clone());
 
         // Seed database with test data
-        let deployment = insert_test_data(store.clone());
+        let deployment = insert_test_data(store.clone()).await;
 
         // Run test
         test(store, deployment).await.expect("graft test succeeds");
@@ -109,7 +109,7 @@ where
 ///
 /// Inserts data in test blocks 1, 2, and 3, leaving test blocks 3A, 4, and 4A for the tests to
 /// use.
-fn insert_test_data(store: Arc<DieselSubgraphStore>) -> DeploymentLocator {
+async fn insert_test_data(store: Arc<DieselSubgraphStore>) -> DeploymentLocator {
     let manifest = SubgraphManifest::<graph_chain_ethereum::Chain> {
         id: TEST_SUBGRAPH_ID.clone(),
         spec_version: Version::new(1, 0, 0),
@@ -149,6 +149,7 @@ fn insert_test_data(store: Arc<DieselSubgraphStore>) -> DeploymentLocator {
         None,
     );
     transact_entity_operations(&store, &deployment, BLOCKS[0].clone(), vec![test_entity_1])
+        .await
         .unwrap();
 
     let test_entity_2 = create_test_entity(
@@ -177,6 +178,7 @@ fn insert_test_data(store: Arc<DieselSubgraphStore>) -> DeploymentLocator {
         BLOCKS[1].clone(),
         vec![test_entity_2, test_entity_3_1],
     )
+    .await
     .unwrap();
 
     let test_entity_3_2 = create_test_entity(
@@ -195,6 +197,7 @@ fn insert_test_data(store: Arc<DieselSubgraphStore>) -> DeploymentLocator {
         BLOCKS[2].clone(),
         vec![test_entity_3_2],
     )
+    .await
     .unwrap();
 
     deployment
@@ -295,19 +298,23 @@ async fn check_graft(
         key: EntityKey::data(deployment.hash.clone(), USER.to_owned(), "3".to_owned()),
         data: shaq,
     };
-    transact_entity_operations(&store, &deployment, BLOCKS[2].clone(), vec![op]).unwrap();
+    transact_entity_operations(&store, &deployment, BLOCKS[2].clone(), vec![op])
+        .await
+        .unwrap();
 
     store
         .cheap_clone()
         .writable(LOGGER.clone(), deployment.id)
         .await?
         .revert_block_operations(BLOCKS[1].clone(), None)
+        .await
         .expect("We can revert a block we just created");
 
     let err = store
         .writable(LOGGER.clone(), deployment.id)
         .await?
         .revert_block_operations(BLOCKS[0].clone(), None)
+        .await
         .expect_err("Reverting past graft point is not allowed");
 
     assert!(err.to_string().contains("Can not revert subgraph"));
