@@ -285,6 +285,7 @@ fn find_entities(
     .order(EntityOrder::Descending(
         "name".to_string(),
         ValueType::String,
+        None,
     ));
 
     let entities = store
