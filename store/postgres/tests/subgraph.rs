@@ -3,6 +3,7 @@ use graph::{
         server::index_node::VersionInfo,
         store::{DeploymentLocator, StatusStore},
     },
+    data::query::QueryTarget,
     data::subgraph::schema::SubgraphError,
     data::subgraph::schema::SubgraphHealth,
     prelude::EntityChange,
@@ -537,7 +538,10 @@ fn fatal_vs_non_fatal() {
     run_test_sequentially(|store| async move {
         let deployment = setup();
         let query_store = store
-            .query_store(deployment.hash.clone().into(), false)
+            .query_store(
+                QueryTarget::Deployment(deployment.hash.clone(), Default::default()),
+                false,
+            )
             .await
             .unwrap();
 
@@ -582,7 +586,10 @@ fn fail_unfail_deterministic_error() {
         let deployment = setup();
 
         let query_store = store
-            .query_store(deployment.hash.cheap_clone().into(), false)
+            .query_store(
+                QueryTarget::Deployment(deployment.hash.clone(), Default::default()),
+                false,
+            )
             .await
             .unwrap();
 

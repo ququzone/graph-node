@@ -74,7 +74,7 @@ impl TryFrom<&r::Value> for ErrorPolicy {
 /// The input schema should only have type/enum/interface/union definitions
 /// and must not include a root Query type. This Query type is derived, with
 /// all its fields and their input arguments, based on the existing types.
-pub fn api_schema(input_schema: &Document) -> Result<Document, APISchemaError> {
+pub fn api_schema(input_schema: &Document, version: &Version) -> Result<Document, APISchemaError> {
     // Refactor: Take `input_schema` by value.
     let object_types = input_schema.get_object_type_definitions();
     let interface_types = input_schema.get_interface_type_definitions();
@@ -82,11 +82,12 @@ pub fn api_schema(input_schema: &Document) -> Result<Document, APISchemaError> {
     // Refactor: Don't clone the schema.
     let mut schema = input_schema.clone();
     add_meta_field_type(&mut schema);
-    add_types_for_object_types(&mut schema, &object_types)?;
-    add_types_for_interface_types(&mut schema, &interface_types)?;
-    add_field_arguments(&mut schema, input_schema)?;
-    add_query_type(&mut schema, &object_types, &interface_types)?;
-    add_subscription_type(&mut schema, &object_types, &interface_types)?;
+
+    add_types_for_object_types(&mut schema, &object_types, version)?;
+    add_types_for_interface_types(&mut schema, &interface_types, version)?;
+    add_field_arguments(&mut schema, input_schema, version)?;
+    add_query_type(&mut schema, &object_types, &interface_types, version)?;
+    add_subscription_type(&mut schema, &object_types, &interface_types, version)?;
 
     // Remove the `_Schema_` type from the generated schema.
     schema.definitions.retain(|d| match d {
@@ -118,10 +119,13 @@ fn add_meta_field_type(schema: &mut Document) {
 fn add_types_for_object_types(
     schema: &mut Document,
     object_types: &Vec<&ObjectType>,
+    version: &Version,
 ) -> Result<(), APISchemaError> {
     for object_type in object_types {
         if !object_type.name.eq(SCHEMA_TYPE_NAME) {
-            add_order_by_type(schema, &object_type.name, &object_type.fields)?;
+            if version.supports(FeatureFlag::BasicOrdering) {
+                add_order_by_type(schema, &object_type.name, &object_type.fields)?;
+            }
             add_filter_type(schema, &object_type.name, &object_type.fields)?;
         }
     }
@@ -132,9 +136,12 @@ fn add_types_for_object_types(
 fn add_types_for_interface_types(
     schema: &mut Document,
     interface_types: &[&InterfaceType],
+    version: &Version,
 ) -> Result<(), APISchemaError> {
     for interface_type in interface_types {
-        add_order_by_type(schema, &interface_type.name, &interface_type.fields)?;
+        if version.supports(FeatureFlag::BasicOrdering) {
+            add_order_by_type(schema, &interface_type.name, &interface_type.fields)?;
+        }
         add_filter_type(schema, &interface_type.name, &interface_type.fields)?;
     }
     Ok(())
@@ -378,6 +385,7 @@ fn add_query_type(
     schema: &mut Document,
     object_types: &[&ObjectType],
     interface_types: &[&InterfaceType],
+    version: &Version,
 ) -> Result<(), APISchemaError> {
     let type_name = String::from("Query");
 
@@ -390,7 +398,7 @@ fn add_query_type(
         .map(|t| t.name.as_str())
         .filter(|name| !name.eq(&SCHEMA_TYPE_NAME))
         .chain(interface_types.iter().map(|t| t.name.as_str()))
-        .flat_map(|name| query_fields_for_type(name))
+        .flat_map(|name| query_fields_for_type(name, version))
         .collect::<Vec<Field>>();
     let mut fulltext_fields = schema
         .get_fulltext_directives()
@@ -474,6 +482,7 @@ fn add_subscription_type(
     schema: &mut Document,
     object_types: &[&ObjectType],
     interface_types: &[&InterfaceType],
+    version: &Version,
 ) -> Result<(), APISchemaError> {
     let type_name = String::from("Subscription");
 
@@ -486,7 +495,7 @@ fn add_subscription_type(
         .map(|t| &t.name)
         .filter(|name| !name.eq(&SCHEMA_TYPE_NAME))
         .chain(interface_types.iter().map(|t| &t.name))
-        .flat_map(|name| query_fields_for_type(name))
+        .flat_map(|name| query_fields_for_type(name, version))
         .collect();
     fields.push(meta_field());
 
@@ -538,8 +547,8 @@ fn subgraph_error_argument() -> InputValue {
 }
 
 /// Generates `Query` fields for the given type name (e.g. `users` and `user`).
-fn query_fields_for_type(type_name: &str) -> Vec<Field> {
-    let mut collection_arguments = collection_arguments_for_named_type(type_name);
+fn query_fields_for_type(type_name: &str, version: &Version) -> Vec<Field> {
+    let mut collection_arguments = collection_arguments_for_named_type(type_name, version);
     collection_arguments.push(block_argument());
 
     let mut by_id_arguments = vec![
@@ -604,7 +613,7 @@ fn meta_field() -> Field {
 }
 
 /// Generates arguments for collection queries of a named type (e.g. User).
-fn collection_arguments_for_named_type(type_name: &str) -> Vec<InputValue> {
+fn collection_arguments_for_named_type(type_name: &str, version: &Version) -> Vec<InputValue> {
     // `first` and `skip` should be non-nullable, but the Apollo graphql client
     // exhibts non-conforming behaviour by erroing if no value is provided for a
     // non-nullable field, regardless of the presence of a default.
@@ -614,19 +623,9 @@ fn collection_arguments_for_named_type(type_name: &str) -> Vec<InputValue> {
     let mut first = input_value(&"first".to_string(), "", Type::NamedType("Int".to_string()));
     first.default_value = Some(Value::Int(100.into()));
 
-    let args = vec![
+    let mut args = vec![
         skip,
         first,
-        input_value(
-            &"orderBy".to_string(),
-            "",
-            Type::NamedType(format!("{}_orderBy", type_name)),
-        ),
-        input_value(
-            &"orderDirection".to_string(),
-            "",
-            Type::NamedType("OrderDirection".to_string()),
-        ),
         input_value(
             &"where".to_string(),
             "",
@@ -634,12 +633,26 @@ fn collection_arguments_for_named_type(type_name: &str) -> Vec<InputValue> {
         ),
     ];
 
+    if version.supports(FeatureFlag::BasicOrdering) {
+        args.push(input_value(
+            &"orderBy".to_string(),
+            "",
+            Type::NamedType(format!("{}_orderBy", type_name)),
+        ));
+        args.push(input_value(
+            &"orderDirection".to_string(),
+            "",
+            Type::NamedType("OrderDirection".to_string()),
+        ))
+    }
+
     args
 }
 
 fn add_field_arguments(
     schema: &mut Document,
     input_schema: &Document,
+    version: &Version,
 ) -> Result<(), APISchemaError> {
     // Refactor: Remove the `input_schema` argument and do a mutable iteration
     // over the definitions in `schema`. Also the duplication between this and
@@ -661,10 +674,12 @@ fn add_field_arguments(
 
                     match input_reference_type {
                         TypeDefinition::Object(ot) => {
-                            field.arguments = collection_arguments_for_named_type(&ot.name);
+                            field.arguments =
+                                collection_arguments_for_named_type(&ot.name, version);
                         }
                         TypeDefinition::Interface(it) => {
-                            field.arguments = collection_arguments_for_named_type(&it.name);
+                            field.arguments =
+                                collection_arguments_for_named_type(&it.name, version);
                         }
                         _ => unreachable!(
                             "referenced entity types can only be object or interface types"
@@ -693,10 +708,12 @@ fn add_field_arguments(
 
                     match input_reference_type {
                         TypeDefinition::Object(ot) => {
-                            field.arguments = collection_arguments_for_named_type(&ot.name);
+                            field.arguments =
+                                collection_arguments_for_named_type(&ot.name, version);
                         }
                         TypeDefinition::Interface(it) => {
-                            field.arguments = collection_arguments_for_named_type(&it.name);
+                            field.arguments =
+                                collection_arguments_for_named_type(&it.name, version);
                         }
                         _ => unreachable!(
                             "referenced entity types can only be object or interface types"
@@ -722,7 +739,8 @@ mod tests {
     fn api_schema_contains_built_in_scalar_types() {
         let input_schema =
             parse_schema("type User { id: ID! }").expect("Failed to parse input schema");
-        let schema = api_schema(&input_schema).expect("Failed to derive API schema");
+        let schema =
+            api_schema(&input_schema, &Default::default()).expect("Failed to derive API schema");
 
         schema
             .get_named_type("Boolean")
@@ -745,7 +763,8 @@ mod tests {
     fn api_schema_contains_order_direction_enum() {
         let input_schema = parse_schema("type User { id: ID!, name: String! }")
             .expect("Failed to parse input schema");
-        let schema = api_schema(&input_schema).expect("Failed to derived API schema");
+        let schema =
+            api_schema(&input_schema, &Default::default()).expect("Failed to derived API schema");
 
         let order_direction = schema
             .get_named_type("OrderDirection")
@@ -768,7 +787,8 @@ mod tests {
     fn api_schema_contains_query_type() {
         let input_schema =
             parse_schema("type User { id: ID! }").expect("Failed to parse input schema");
-        let schema = api_schema(&input_schema).expect("Failed to derive API schema");
+        let schema =
+            api_schema(&input_schema, &Default::default()).expect("Failed to derive API schema");
         schema
             .get_named_type("Query")
             .expect("Root Query type is missing in API schema");
@@ -778,7 +798,8 @@ mod tests {
     fn api_schema_contains_field_order_by_enum() {
         let input_schema = parse_schema("type User { id: ID!, name: String! }")
             .expect("Failed to parse input schema");
-        let schema = api_schema(&input_schema).expect("Failed to derived API schema");
+        let schema =
+            api_schema(&input_schema, &Default::default()).expect("Failed to derived API schema");
 
         let user_order_by = schema
             .get_named_type("User_orderBy")
@@ -828,7 +849,8 @@ mod tests {
             "#,
         )
         .expect("Failed to parse input schema");
-        let schema = api_schema(&input_schema).expect("Failed to derived API schema");
+        let schema =
+            api_schema(&input_schema, &Default::default()).expect("Failed to derived API schema");
 
         let user_filter = schema
             .get_named_type("User_filter")
@@ -908,7 +930,8 @@ mod tests {
             "type User { id: ID!, name: String! } type UserProfile { id: ID!, title: String! }",
         )
         .expect("Failed to parse input schema");
-        let schema = api_schema(&input_schema).expect("Failed to derive API schema");
+        let schema =
+            api_schema(&input_schema, &Default::default()).expect("Failed to derive API schema");
 
         let query_type = schema
             .get_named_type("Query")
@@ -1005,7 +1028,8 @@ mod tests {
             ",
         )
         .expect("Failed to parse input schema");
-        let schema = api_schema(&input_schema).expect("Failed to derived API schema");
+        let schema =
+            api_schema(&input_schema, &Default::default()).expect("Failed to derived API schema");
 
         let query_type = schema
             .get_named_type("Query")
@@ -1094,7 +1118,8 @@ type Gravatar @entity {
 }
 "#;
         let input_schema = parse_schema(SCHEMA).expect("Failed to parse input schema");
-        let schema = api_schema(&input_schema).expect("Failed to derive API schema");
+        let schema =
+            api_schema(&input_schema, &Default::default()).expect("Failed to derive API schema");
 
         let query_type = schema
             .get_named_type("Query")

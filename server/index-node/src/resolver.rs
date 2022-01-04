@@ -8,6 +8,7 @@ use graph::data::subgraph::{status, MAX_SPEC_VERSION};
 use graph::prelude::*;
 use graph::{
     components::store::StatusStore,
+    components::versions::VERSIONS,
     data::graphql::{object, IntoValue, ObjectOrInterface, ValueMap},
 };
 use graph_graphql::prelude::{a, ExecutionContext, Resolver};
@@ -265,6 +266,23 @@ where
         response.insert("network".to_string(), network);
 
         Ok(r::Value::Object(response))
+    }
+
+    fn resolve_subgraph_versions(
+        &self,
+        _field: &a::Field,
+    ) -> Result<r::Value, QueryExecutionError> {
+        Ok(r::Value::List(
+            VERSIONS
+                .keys()
+                .into_iter()
+                .map(|vn| {
+                    let mut obj = Object::new();
+                    obj.insert("version".to_string(), r::Value::String(vn.to_string()));
+                    r::Value::Object(obj)
+                })
+                .collect(),
+        ))
     }
 }
 
@@ -525,6 +543,8 @@ where
 
             // The top-level `entityChangesInBlock` field
             (None, "entityChangesInBlock") => self.resolve_entity_changes_in_block(field),
+            // The top-level `subgraphVersions` field
+            (None, "subgraphVersions") => self.resolve_subgraph_versions(field),
 
             // Resolve fields of `Object` values (e.g. the `latestBlock` field of `EthereumBlock`)
             (value, _) => Ok(value.unwrap_or(r::Value::Null)),
