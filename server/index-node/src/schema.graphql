@@ -24,8 +24,8 @@ type Query {
   indexer has in their database
   """
   publicProofsOfIndexing(
-    requests: [ProofOfIndexingRequest!]!
-  ): [ProofOfIndexingResult!]!
+    requests: [PublicProofOfIndexingRequest!]!
+  ): [PublicProofOfIndexingResult!]!
   subgraphFeatures(subgraphId: String!): SubgraphFeatures!
 }
 
@@ -111,6 +111,22 @@ input BlockInput {
 input ProofOfIndexingRequest {
   deployment: String!
   block: BlockInput!
+}
+
+input PublicProofOfIndexingRequest {
+  deployment: String!
+  blockNumber: BigInt!
+}
+
+type PartialBlock {
+  hash: Bytes
+  number: BigInt!
+}
+
+type PublicProofOfIndexingResult {
+  deployment: String!
+  block: PartialBlock!
+  proofOfIndexing: Bytes!
 }
 
 type ProofOfIndexingResult {

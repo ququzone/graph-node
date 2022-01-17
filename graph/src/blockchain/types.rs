@@ -26,6 +26,10 @@ impl BlockHash {
     pub fn hash_hex(&self) -> String {
         hex::encode(&self.0)
     }
+
+    pub fn zero() -> Self {
+        Self::from(H256::zero())
+    }
 }
 
 impl fmt::Display for BlockHash {

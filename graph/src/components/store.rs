@@ -18,7 +18,7 @@ use std::time::Duration;
 use thiserror::Error;
 use web3::types::{Address, H256};
 
-use crate::blockchain::{Block, Blockchain};
+use crate::blockchain::{Block, BlockHash, Blockchain};
 use crate::components::server::index_node::VersionInfo;
 use crate::components::transaction_receipt;
 use crate::data::subgraph::status;
@@ -1402,6 +1402,12 @@ pub trait QueryStore: Send + Sync {
     async fn query_permit(&self) -> tokio::sync::OwnedSemaphorePermit;
 }
 
+#[derive(Debug, Clone)]
+pub struct PartialBlockPtr {
+    pub number: BlockNumber,
+    pub hash: Option<BlockHash>,
+}
+
 /// A view of the store that can provide information about the indexing status
 /// of any subgraph and any deployment
 #[async_trait]
@@ -1441,6 +1447,15 @@ pub trait StatusStore: Send + Sync + 'static {
         indexer: &Option<Address>,
         block: BlockPtr,
     ) -> Result<Option<[u8; 32]>, StoreError>;
+
+    /// A value of None indicates that the table is not available, that the
+    /// block with the given number is not available, that the block is
+    /// ambiguous or that there are other issues with the request.
+    async fn get_public_proof_of_indexing(
+        &self,
+        subgraph_id: &DeploymentHash,
+        block_number: BlockNumber,
+    ) -> Result<Option<(PartialBlockPtr, [u8; 32])>, StoreError>;
 }
 
 /// An entity operation that can be transacted into the store; as opposed to

@@ -98,7 +98,7 @@ pub mod prelude {
     pub type DynTryFuture<'a, Ok = (), Err = Error> =
         Pin<Box<dyn futures03::Future<Output = Result<Ok, Err>> + Send + 'a>>;
 
-    pub use crate::blockchain::BlockPtr;
+    pub use crate::blockchain::{BlockHash, BlockPtr};
 
     pub use crate::components::ethereum::{
         EthereumBlock, EthereumBlockWithCalls, EthereumCall, LightEthereumBlock,
@@ -122,9 +122,9 @@ pub mod prelude {
         AttributeNames, BlockNumber, ChainStore, ChildMultiplicity, EntityCache, EntityChange,
         EntityChangeOperation, EntityCollection, EntityFilter, EntityKey, EntityLink,
         EntityModification, EntityOperation, EntityOrder, EntityQuery, EntityRange, EntityWindow,
-        EthereumCallCache, ParentLink, PoolWaitStats, QueryStore, QueryStoreManager, StoreError,
-        StoreEvent, StoreEventStream, StoreEventStreamBox, SubgraphStore, WindowAttribute,
-        BLOCK_NUMBER_MAX, SUBSCRIPTION_THROTTLE_INTERVAL,
+        EthereumCallCache, ParentLink, PartialBlockPtr, PoolWaitStats, QueryStore,
+        QueryStoreManager, StoreError, StoreEvent, StoreEventStream, StoreEventStreamBox,
+        SubgraphStore, WindowAttribute, BLOCK_NUMBER_MAX, SUBSCRIPTION_THROTTLE_INTERVAL,
     };
     pub use crate::components::subgraph::{
         BlockState, DataSourceTemplateInfo, HostMetrics, RuntimeHost, RuntimeHostBuilder,

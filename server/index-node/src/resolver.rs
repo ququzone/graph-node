@@ -14,20 +14,20 @@ use std::convert::TryInto;
 use web3::types::{Address, H256};
 
 #[derive(Clone, Debug)]
-struct ProofOfIndexingRequest {
+struct PublicProofOfIndexingRequest {
     pub deployment: DeploymentHash,
-    pub block: BlockPtr,
+    pub block_number: BlockNumber,
 }
 
-impl TryFromValue for ProofOfIndexingRequest {
+impl TryFromValue for PublicProofOfIndexingRequest {
     fn try_from_value(value: &r::Value) -> Result<Self, Error> {
         match value {
             r::Value::Object(o) => Ok(Self {
-                deployment: o.get_required::<DeploymentHash>("deployment")?,
-                block: o.get_required::<BlockPtr>("block")?,
+                deployment: DeploymentHash::new(o.get_required::<String>("deployment")?).unwrap(),
+                block_number: o.get_required::<BlockNumber>("blockNumber")?,
             }),
             _ => Err(anyhow!(
-                "Cannot parse non-object value as ProofOfIndexingRequest: {:?}",
+                "Cannot parse non-object value as PublicProofOfIndexingRequest: {:?}",
                 value
             )),
         }
@@ -35,18 +35,21 @@ impl TryFromValue for ProofOfIndexingRequest {
 }
 
 #[derive(Debug)]
-struct ProofOfIndexingResult {
+struct PublicProofOfIndexingResult {
     pub deployment: DeploymentHash,
-    pub block: BlockPtr,
+    pub block: PartialBlockPtr,
     pub proof_of_indexing: Option<String>,
 }
 
-impl IntoValue for ProofOfIndexingResult {
+impl IntoValue for PublicProofOfIndexingResult {
     fn into_value(self) -> r::Value {
         object! {
             __typename: "ProofOfIndexingResult",
             deployment: self.deployment.to_string(),
-            block: self.block,
+            block: object! {
+                number: self.block.number,
+                hash: self.block.hash.map(|hash| hash.hash_hex()),
+            },
             proofOfIndexing: self.proof_of_indexing,
         }
     }
@@ -181,28 +184,28 @@ where
         argument_values: &HashMap<&str, r::Value>,
     ) -> Result<r::Value, QueryExecutionError> {
         let requests = argument_values
-            .get_required::<Vec<ProofOfIndexingRequest>>("requests")
-            .expect("valid requests required");
+            .get_required::<Vec<PublicProofOfIndexingRequest>>("requests")
+            .expect("valid requests required, validation should have caught this");
 
-        let zero_indexer = Some(Address::zero());
         Ok(r::Value::List(
             requests
                 .clone()
                 .iter()
                 .map(|request| {
-                    match futures::executor::block_on(self.store.get_proof_of_indexing(
-                        &request.deployment,
-                        &zero_indexer,
-                        request.block.clone(),
-                    )) {
+                    match futures::executor::block_on(
+                        self.store.get_public_proof_of_indexing(
+                            &request.deployment,
+                            request.block_number,
+                        ),
+                    ) {
                         Ok(Some(poi)) => Some(poi),
                         Ok(None) => None,
                         Err(e) => {
                             error!(
                                 self.logger,
-                                "Failed to query proof of indexing";
+                                "Failed to query public proof of indexing";
                                 "subgraph" => &request.deployment,
-                                "block" => format!("{}", request.block),
+                                "block" => format!("{}", request.block_number),
                                 "error" => format!("{:?}", e)
                             );
                             None
@@ -210,11 +213,15 @@ where
                     }
                 })
                 .zip(requests.into_iter())
-                .map(|(poi, request)| ProofOfIndexingResult {
-                    deployment: request.deployment,
-                    block: request.block,
-                    proof_of_indexing: poi.map(|poi| format!("0x{}", hex::encode(&poi))),
-                })
+                .filter_map(
+                    |(poi_result, request): (Option<(PartialBlockPtr, [u8; 32])>, _)| {
+                        poi_result.map(|(block, poi)| PublicProofOfIndexingResult {
+                            deployment: request.deployment,
+                            block,
+                            proof_of_indexing: Some(format!("0x{}", hex::encode(&poi))),
+                        })
+                    },
+                )
                 .map(IntoValue::into_value)
                 .collect(),
         ))
@@ -508,7 +515,7 @@ where
             }
 
             // The top-level `publicProofsOfIndexing` field
-            (None, "ProofOfIndexingResult", "publicProofsOfIndexing") => {
+            (None, "PublicProofOfIndexingResult", "publicProofsOfIndexing") => {
                 self.resolve_public_proofs_of_indexing(arguments)
             }
 
