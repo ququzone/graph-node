@@ -135,6 +135,7 @@ impl StoreBuilder {
             shards,
             Arc::new(config.deployment.clone()),
             notification_sender,
+            registry,
         ));
 
         (store, pools)
