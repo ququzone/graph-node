@@ -51,7 +51,10 @@ impl WritableSubgraphStore {
     }
 }
 
-pub(crate) struct WritableStore {
+/// Write synchronously to the actual store, i.e., once a method returns,
+/// the changes have been committed to the store and are visible to anybody
+/// else connecting to that database
+struct SyncStore {
     logger: Logger,
     store: WritableSubgraphStore,
     writable: Arc<DeploymentStore>,
@@ -59,11 +62,11 @@ pub(crate) struct WritableStore {
     input_schema: Arc<Schema>,
 }
 
-impl WritableStore {
+impl SyncStore {
     const BACKOFF_BASE: Duration = Duration::from_millis(100);
     const BACKOFF_CEIL: Duration = Duration::from_secs(10);
 
-    pub(crate) fn new(
+    fn new(
         subgraph_store: SubgraphStore,
         logger: Logger,
         site: Arc<Site>,
@@ -138,7 +141,7 @@ impl WritableStore {
 }
 
 // Methods that mirror `WritableStoreTrait`
-impl WritableStore {
+impl SyncStore {
     fn block_ptr(&self) -> Result<Option<BlockPtr>, StoreError> {
         self.retry("block_ptr", || self.writable.block_ptr(self.site.as_ref()))
     }
@@ -231,6 +234,10 @@ impl WritableStore {
         data_sources: &[StoredDynamicDataSource],
         deterministic_errors: &[SubgraphError],
     ) -> Result<(), StoreError> {
+        fn same_subgraph(mods: &[EntityModification], id: &DeploymentHash) -> bool {
+            mods.iter().all(|md| &md.entity_key().subgraph_id == id)
+        }
+
         assert!(
             same_subgraph(mods, &self.site.deployment),
             "can only transact operations within one shard"
@@ -325,24 +332,19 @@ impl WritableStore {
     }
 }
 
-fn same_subgraph(mods: &[EntityModification], id: &DeploymentHash) -> bool {
-    mods.iter().all(|md| &md.entity_key().subgraph_id == id)
-}
-
-#[allow(dead_code)]
-pub struct WritableAgent {
-    store: Arc<WritableStore>,
+pub struct WritableStore {
+    store: Arc<SyncStore>,
     block_ptr: Mutex<Option<BlockPtr>>,
     block_cursor: Mutex<Option<String>>,
 }
 
-impl WritableAgent {
+impl WritableStore {
     pub(crate) fn new(
         subgraph_store: SubgraphStore,
         logger: Logger,
         site: Arc<Site>,
     ) -> Result<Self, StoreError> {
-        let store = Arc::new(WritableStore::new(subgraph_store, logger, site)?);
+        let store = Arc::new(SyncStore::new(subgraph_store, logger, site)?);
         let block_ptr = Mutex::new(store.block_ptr()?);
         let block_cursor = Mutex::new(store.block_cursor()?);
         Ok(Self {
@@ -353,9 +355,8 @@ impl WritableAgent {
     }
 }
 
-#[allow(unused_variables)]
 #[async_trait::async_trait]
-impl WritableStoreTrait for WritableAgent {
+impl WritableStoreTrait for WritableStore {
     fn block_ptr(&self) -> Option<BlockPtr> {
         self.block_ptr.lock().unwrap().clone()
     }
