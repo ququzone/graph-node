@@ -2,7 +2,11 @@ use std::{collections::HashMap, env, num::ParseIntError, sync::Arc, time::Durati
 
 use config::PoolSize;
 use git_testament::{git_testament, render_testament};
-use graph::{data::graphql::effort::LoadManager, prelude::chrono, prometheus::Registry};
+use graph::{
+    data::graphql::effort::LoadManager,
+    prelude::{anyhow, chrono},
+    prometheus::Registry,
+};
 use graph_core::MetricsRegistry;
 use graph_graphql::prelude::GraphQlRunner;
 use lazy_static::lazy_static;
@@ -194,6 +198,9 @@ pub enum Command {
 
     /// Manage database indexes
     Index(IndexCommand),
+
+    /// Compares cached blocks with fresh ones and report any differences and affected subgraphs.
+    FixBlock(FixBlockCommand),
 }
 
 impl Command {
@@ -435,6 +442,29 @@ pub enum IndexCommand {
         #[structopt(empty_values = false)]
         index_name: String,
     },
+}
+
+#[derive(Clone, Debug, StructOpt)]
+pub struct FixBlockCommand {
+    /// Network name (must fit one of the chain)
+    #[structopt(empty_values = false)]
+    network_name: String,
+    #[structopt(subcommand)]
+    method: FixBlockSubCommand,
+}
+
+#[derive(Clone, Debug, StructOpt)]
+enum FixBlockSubCommand {
+    /// The number of the target block
+    ByHash { hash: String },
+
+    /// The hash of the target block
+    ByNumber { number: i32 },
+
+    /// A block number range in the form: `start..end`
+    ///
+    /// All valid [`std::ops::Range`] definitions are accepted.
+    ByRange { range: String },
 }
 
 impl From<Opt> for config::Opt {
@@ -881,6 +911,24 @@ async fn main() {
                 Drop { id, index_name } => {
                     commands::index::drop(subgraph_store, primary_pool, &id, &index_name).await
                 }
+            }
+        }
+        FixBlock(cmd) => {
+            use commands::fix_block::{by_hash, by_number, by_range};
+            use graph::components::store::BlockStore as BlockStoreTrait;
+            use FixBlockSubCommand::*;
+
+            if let Some(chain_store) = ctx.store().block_store().chain_store(&cmd.network_name) {
+                match cmd.method {
+                    ByHash { hash } => by_hash(chain_store, &hash).await,
+                    ByNumber { number } => by_number(chain_store, number).await,
+                    ByRange { range } => by_range(chain_store, &range).await,
+                }
+            } else {
+                Err(anyhow!(
+                    "Could not find a network named '{}'",
+                    &cmd.network_name
+                ))
             }
         }
     };
