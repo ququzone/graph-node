@@ -465,6 +465,9 @@ enum FixBlockSubCommand {
     ///
     /// All valid [`std::ops::Range`] definitions are accepted.
     ByRange { range: String },
+
+    /// Truncates the whole block cache for the given chain.
+    TruncateCache,
 }
 
 impl From<Opt> for config::Opt {
@@ -923,6 +926,7 @@ async fn main() {
                     ByHash { hash } => by_hash(chain_store, &hash).await,
                     ByNumber { number } => by_number(chain_store, number).await,
                     ByRange { range } => by_range(chain_store, &range).await,
+                    TruncateCache => truncate(chain_store),
                 }
             } else {
                 Err(anyhow!(
