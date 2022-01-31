@@ -34,8 +34,8 @@ pub async fn by_range(chain_store: Arc<ChainStore>, range: &str) -> anyhow::Resu
     todo!()
 }
 
-pub fn truncate(chain_store: Arc<ChainStore>) -> anyhow::Result<()> {
-    if !prompt_for_confirmation()? {
+pub fn truncate(chain_store: Arc<ChainStore>, skip_confirmation: bool) -> anyhow::Result<()> {
+    if !skip_confirmation && !prompt_for_confirmation()? {
         println!("Aborting.");
         return Ok(());
     }

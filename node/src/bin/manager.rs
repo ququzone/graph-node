@@ -467,7 +467,11 @@ enum FixBlockSubCommand {
     ByRange { range: String },
 
     /// Truncates the whole block cache for the given chain.
-    TruncateCache,
+    TruncateCache {
+        /// Skips prompt for confirming the operation.
+        #[structopt(long)]
+        no_confirm: bool,
+    },
 }
 
 impl From<Opt> for config::Opt {
@@ -917,7 +921,7 @@ async fn main() {
             }
         }
         FixBlock(cmd) => {
-            use commands::fix_block::{by_hash, by_number, by_range};
+            use commands::fix_block::{by_hash, by_number, by_range, truncate};
             use graph::components::store::BlockStore as BlockStoreTrait;
             use FixBlockSubCommand::*;
 
@@ -926,7 +930,7 @@ async fn main() {
                     ByHash { hash } => by_hash(chain_store, &hash).await,
                     ByNumber { number } => by_number(chain_store, number).await,
                     ByRange { range } => by_range(chain_store, &range).await,
-                    TruncateCache => truncate(chain_store),
+                    TruncateCache { no_confirm } => truncate(chain_store, no_confirm),
                 }
             } else {
                 Err(anyhow!(
