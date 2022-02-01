@@ -3,6 +3,8 @@ use graph::prelude::{anyhow, StoreError};
 use graph_store_postgres::{connection_pool::ConnectionPool, SubgraphStore};
 use std::{collections::HashSet, sync::Arc};
 
+use crate::manager::deployment::Deployment;
+
 fn validate_fields<T: AsRef<str>>(fields: &[T]) -> Result<(), anyhow::Error> {
     // Must be non-empty. Double checking, since [`StructOpt`] already checks this.
     if fields.is_empty() {
@@ -67,4 +69,14 @@ pub async fn drop(
         .await?;
     println!("Dropped index {index_name}");
     Ok(())
+}
+
+fn find(pool: &ConnectionPool, name: &str) -> anyhow::Result<DeploymentLocator> {
+    let deployment_locator = match &Deployment::lookup(pool, name)?[..] {
+        [] => anyhow::bail!("Found no deployment for the given ID"),
+        [deployment_locator] => deployment_locator,
+        _ => anyhow::bail!("Found multiplle deployments for given identifier"),
+    }
+    .locator();
+    Ok(deployment_locator)
 }

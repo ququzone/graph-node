@@ -999,10 +999,10 @@ impl SubgraphStoreInner {
 
     pub async fn drop_index_for_deployment(
         &self,
-        id: &DeploymentHash,
+        deployment: &DeploymentLocator,
         index_name: &str,
     ) -> Result<(), StoreError> {
-        let (store, site) = self.store(&id)?;
+        let (store, site) = self.store(&deployment.hash)?;
         store.drop_index(site, index_name).await
     }
 }
