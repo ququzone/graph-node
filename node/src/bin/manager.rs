@@ -1,10 +1,9 @@
-use std::{collections::HashMap, env, num::ParseIntError, sync::Arc, time::Duration};
-
 use config::PoolSize;
 use git_testament::{git_testament, render_testament};
 use graph::{
     data::graphql::effort::LoadManager,
-    prelude::{anyhow, chrono},
+    log::logger,
+    prelude::{anyhow, chrono, info, o, slog, tokio, Logger, NodeId},
     prometheus::Registry,
 };
 use graph_core::MetricsRegistry;
@@ -22,9 +21,9 @@ use graph_store_postgres::{
     connection_pool::ConnectionPool, BlockStore, Shard, Store, SubgraphStore, SubscriptionManager,
     PRIMARY_SHARD,
 };
-
-use graph_node::config::{self, Config as Cfg};
-use graph_node::manager::commands;
+use lazy_static::lazy_static;
+use std::{collections::HashMap, env, num::ParseIntError, sync::Arc, time::Duration};
+use structopt::StructOpt;
 
 const VERSION_LABEL_KEY: &str = "version";
 
