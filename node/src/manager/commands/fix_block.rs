@@ -25,11 +25,9 @@ pub async fn by_hash(
     };
 
     // Try to find a matching block from the store
-    let blocks = chain_store.blocks(&[block_hash])?;
-    match &blocks[..] {
-        [_single_block] => { /* we want this case */ }
-        [] => anyhow::bail!("Found no block with hash equal to {}", hash),
-        _ => anyhow::bail!("Found multiple blocks with hash equal to {}", hash),
+    let cached_block = {
+        let blocks = chain_store.blocks(&[block_hash])?;
+        get_single_item("block", blocks)?
     };
 
     // Compare and report
@@ -44,23 +42,11 @@ pub async fn by_number(
     number: i32,
 ) -> anyhow::Result<()> {
     let block_hashes = chain_store.block_hashes_by_block_number(number)?;
-
-    // Try to resolve block number into a single block hash.
-    let hash = match block_hashes[..] {
-        [] => anyhow::bail!("Found no block with number {}", number),
-        [hash] => hash,
-        _ => anyhow::bail!(
-            "Found multiple blocks for the same number. Please specify a block hash instead."
-        ),
-    };
+    let block_hash = get_single_item("block hash", block_hashes)?;
 
     // Try to find a matching block from the store
-    let blocks = chain_store.blocks(&[hash])?;
-    match &blocks[..] {
-        [_single_block] => { /* we want this case */ }
-        [] => anyhow::bail!("Found no block with hash equal to {}", hash),
-        _ => anyhow::bail!("Found multiple blocks with hash equal to {}", hash),
-    };
+    let cached_blocks = chain_store.blocks(&[block_hash])?;
+    let cached_block = get_single_item("block", cached_blocks)?;
 
     // Compare and report
     // let comparison_results =
@@ -113,5 +99,17 @@ fn prompt_for_confirmation() -> anyhow::Result<bool> {
     match answer.trim() {
         "y" | "yes" => Ok(true),
         _ => Ok(false),
+    }
+}
+
+fn get_single_item<I, T>(name: &'static str, collection: I) -> anyhow::Result<T>
+where
+    I: IntoIterator<Item = T>,
+{
+    let mut iterator = collection.into_iter();
+    match (iterator.next(), iterator.next()) {
+        (Some(a), None) => Ok(a),
+        (None, None) => bail!("Expected a single {name} but found none."),
+        _ => bail!("Expected a single {name} but found multiple occurrences."),
     }
 }
