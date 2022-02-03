@@ -5,13 +5,14 @@ use graph::{
     prelude::{
         anyhow::{self, anyhow, Context},
         hex,
-        serde_json::Value,
+        serde_json::{self, Value},
         web3::types::H256,
     },
     slog::Logger,
 };
 use graph_chain_ethereum::{EthereumAdapter, EthereumAdapterTrait};
 use graph_store_postgres::ChainStore;
+use json_structural_diff::{colorize as diff_to_string, JsonDiff};
 use std::{
     io::{self, Write},
     sync::Arc,
@@ -91,9 +92,11 @@ async fn compare_blocks(
     cached_blocks: &[(H256, Value)],
     ethereum_adapter: &EthereumAdapter,
     logger: &Logger,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<(H256, Option<String>)>> {
     // Request provider for fresh blocks from the input set
     let mut provider_blocks = Vec::new();
+
+    // TODO: send requests concurrently
     for (hash, _block) in cached_blocks {
         let provider_block = ethereum_adapter
             .block_by_hash(&logger, *hash)
@@ -101,6 +104,7 @@ async fn compare_blocks(
             .await
             .context("failed to fetch block")?
             .ok_or_else(|| anyhow!("JRPC provider found no block with hash {hash}"))?;
+
         ensure!(
             provider_block.hash == Some(*hash),
             "Provider responded with a different block hash"
@@ -108,7 +112,27 @@ async fn compare_blocks(
         provider_blocks.push(provider_block);
     }
 
-    todo!("diff the pairs");
+    // Diff the block pairs
+    let pairs = cached_blocks.iter().zip(provider_blocks.iter());
+    let mut comparison_results: Vec<(H256, Option<String>)> = Vec::new();
+    for ((hash, cached_block), provider_block) in pairs {
+        let provider_block = serde_json::to_value(provider_block)
+            .context("failed to parse provider block as a JSON value")?;
+        if cached_block != &provider_block {
+            let mut diff_result = JsonDiff::diff(cached_block, &provider_block, false);
+            let json_diff = diff_result
+                .diff
+                .take()
+                .map(|value| diff_to_string(&value, false));
+
+            // TODO: check if the diff is an empty string inside an option, as the `Option::Some`
+            // variant will signal the difference. We can avoid that by not calling `diff_to_string`
+            // for `Value::None` variants.
+
+            comparison_results.push((*hash, json_diff));
+        }
+    }
+    Ok(comparison_results)
 }
 
 fn prompt_for_confirmation() -> anyhow::Result<bool> {
