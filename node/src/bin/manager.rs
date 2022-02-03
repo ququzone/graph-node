@@ -935,8 +935,12 @@ async fn main() -> anyhow::Result<()> {
                     ))?;
 
                 match cmd.method {
-                    ByHash { hash } => by_hash(chain_store, &ethereum_adapter, &hash).await,
-                    ByNumber { number } => by_number(chain_store, &ethereum_adapter, number).await,
+                    ByHash { hash } => {
+                        by_hash(&hash, chain_store, &ethereum_adapter, &ctx.logger).await
+                    }
+                    ByNumber { number } => {
+                        by_number(number, chain_store, &ethereum_adapter, &ctx.logger).await
+                    }
                     ByRange { range } => by_range(chain_store, &ethereum_adapter, &range).await,
                     TruncateCache { no_confirm } => truncate(chain_store, no_confirm),
                 }

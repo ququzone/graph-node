@@ -1,20 +1,27 @@
+use futures::compat::Future01CompatExt;
 use graph::{
+    anyhow::{bail, ensure},
     components::store::ChainStore as ChainStoreTrait,
     prelude::{
-        anyhow::{self, Context},
-        hex, serde_json,
+        anyhow::{self, anyhow, Context},
+        hex,
+        serde_json::Value,
         web3::types::H256,
     },
+    slog::Logger,
 };
 use graph_chain_ethereum::{EthereumAdapter, EthereumAdapterTrait};
 use graph_store_postgres::ChainStore;
-use std::io::{self, Write};
-use std::sync::Arc;
+use std::{
+    io::{self, Write},
+    sync::Arc,
+};
 
 pub async fn by_hash(
+    hash: &str,
     chain_store: Arc<ChainStore>,
     ethereum_adapter: &EthereumAdapter,
-    hash: &str,
+    logger: &Logger,
 ) -> anyhow::Result<()> {
     // Create a BlockHash value to parse the input as a propper block hash
     let block_hash = {
@@ -31,15 +38,18 @@ pub async fn by_hash(
     };
 
     // Compare and report
-    // let comparison_results =
-    // compare_blocks(&blocks, ethereum_adapter)context("Failed to compare blocks")?;
+    let comparison_results =
+        compare_blocks(&[(block_hash, cached_block)], &ethereum_adapter, logger)
+            .await
+            .context("Failed to compare blocks")?;
     todo!("report comparison results")
 }
 
 pub async fn by_number(
+    number: i32,
     chain_store: Arc<ChainStore>,
     ethereum_adapter: &EthereumAdapter,
-    number: i32,
+    logger: &Logger,
 ) -> anyhow::Result<()> {
     let block_hashes = chain_store.block_hashes_by_block_number(number)?;
     let block_hash = get_single_item("block hash", block_hashes)?;
@@ -49,8 +59,10 @@ pub async fn by_number(
     let cached_block = get_single_item("block", cached_blocks)?;
 
     // Compare and report
-    // let comparison_results =
-    //     compare_blocks(&blocks, ethereum_adapter).with_context(|| "Failed to compare blocks")?;
+    let comparison_results =
+        compare_blocks(&[(block_hash, cached_block)], &ethereum_adapter, logger)
+            .await
+            .context("Failed to compare blocks")?;
     todo!("report comparison results")
 }
 
@@ -75,15 +87,26 @@ pub fn truncate(chain_store: Arc<ChainStore>, skip_confirmation: bool) -> anyhow
         .with_context(|| format!("Failed to truncate block cache for {}", chain_store.chain))
 }
 
-fn compare_blocks(
-    cached_block: &[serde_json::Value],
-    block_hashes: &[H256],
+async fn compare_blocks(
+    cached_blocks: &[(H256, Value)],
     ethereum_adapter: &EthereumAdapter,
+    logger: &Logger,
 ) -> anyhow::Result<()> {
-    // let eth = ethereum_adapter.web3.eth();
-
-    // eth.block_by_hash(&ethereum_adapter.logger, )
-    todo!("call jrpc and collect fresh blocks for the given input set");
+    // Request provider for fresh blocks from the input set
+    let mut provider_blocks = Vec::new();
+    for (hash, _block) in cached_blocks {
+        let provider_block = ethereum_adapter
+            .block_by_hash(&logger, *hash)
+            .compat()
+            .await
+            .context("failed to fetch block")?
+            .ok_or_else(|| anyhow!("JRPC provider found no block with hash {hash}"))?;
+        ensure!(
+            provider_block.hash == Some(*hash),
+            "Provider responded with a different block hash"
+        );
+        provider_blocks.push(provider_block);
+    }
 
     todo!("diff the pairs");
 }
