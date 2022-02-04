@@ -93,10 +93,19 @@ async fn compare_blocks(
     ethereum_adapter: &EthereumAdapter,
     logger: &Logger,
 ) -> anyhow::Result<Vec<(H256, Option<String>)>> {
-    // Request provider for fresh blocks from the input set
-    let mut provider_blocks = Vec::new();
+    let provider_blocks = fetch_provider_blocks(cached_blocks, ethereum_adapter, logger).await?;
+    let pairs = cached_blocks.iter().zip(provider_blocks.iter());
+    diff_blocks(pairs)
+}
 
-    // TODO: send requests concurrently
+/// Request provider for fresh blocks from the input set
+/// TODO: send renxoquests concurrently
+async fn fetch_provider_blocks(
+    cached_blocks: &[(H256, Value)],
+    ethereum_adapter: &EthereumAdapter,
+    logger: &Logger,
+) -> anyhow::Result<Vec<Value>> {
+    let mut provider_blocks = Vec::new();
     for (hash, _block) in cached_blocks {
         let provider_block = ethereum_adapter
             .block_by_hash(&logger, *hash)
@@ -104,37 +113,47 @@ async fn compare_blocks(
             .await
             .context("failed to fetch block")?
             .ok_or_else(|| anyhow!("JRPC provider found no block with hash {hash}"))?;
-
         ensure!(
             provider_block.hash == Some(*hash),
             "Provider responded with a different block hash"
         );
-        provider_blocks.push(provider_block);
+        let provider_block_as_json = serde_json::to_value(provider_block)
+            .context("failed to parse provider block as a JSON value")?;
+        provider_blocks.push(provider_block_as_json);
     }
+    Ok(provider_blocks)
+}
 
-    // Diff the block pairs
-    let pairs = cached_blocks.iter().zip(provider_blocks.iter());
-    let mut comparison_results: Vec<(H256, Option<String>)> = Vec::new();
+/// Compare the block hashes from our cache against the ones received from the JRPC provider.
+/// Returns a list of hashes diffs in text form, ready to be displayed to the user, in case the
+/// blocks are different.
+fn diff_blocks<'a, I>(pairs: I) -> anyhow::Result<Vec<(H256, Option<String>)>>
+where
+    I: Iterator<Item = (&'a (H256, Value), &'a Value)>,
+{
+    let mut comparison_results = Vec::new();
     for ((hash, cached_block), provider_block) in pairs {
         let provider_block = serde_json::to_value(provider_block)
             .context("failed to parse provider block as a JSON value")?;
         if cached_block != &provider_block {
-            let mut diff_result = JsonDiff::diff(cached_block, &provider_block, false);
-            let json_diff = diff_result
-                .diff
-                .take()
-                .map(|value| diff_to_string(&value, false));
-
-            // TODO: check if the diff is an empty string inside an option, as the `Option::Some`
-            // variant will signal the difference. We can avoid that by not calling `diff_to_string`
-            // for `Value::None` variants.
-
+            let diff_result = JsonDiff::diff(cached_block, &provider_block, false);
+            // The diff result could potentially be a `Value::Null`, which is equivalent to not
+            // being different at all.
+            let json_diff = match diff_result.diff {
+                None | Some(Value::Null) => None,
+                Some(diff) => {
+                    // Convert the JSON diff to a pretty-formatted text that will be displayed to
+                    // the user
+                    Some(diff_to_string(&diff, false))
+                }
+            };
             comparison_results.push((*hash, json_diff));
         }
     }
     Ok(comparison_results)
 }
 
+/// Asks users if they are certain about truncating the whole block cache.
 fn prompt_for_confirmation() -> anyhow::Result<bool> {
     print!("This will delete all cached blocks.\nProceed? [y/N] ");
     io::stdout().flush()?;
@@ -149,6 +168,7 @@ fn prompt_for_confirmation() -> anyhow::Result<bool> {
     }
 }
 
+/// Convenience function for extracting values from unary sets.
 fn get_single_item<I, T>(name: &'static str, collection: I) -> anyhow::Result<T>
 where
     I: IntoIterator<Item = T>,
