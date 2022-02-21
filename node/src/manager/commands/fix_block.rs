@@ -121,6 +121,12 @@ async fn fetch_provider_blocks(
             .context("failed to parse provider block as a JSON value")?;
         provider_blocks.push(provider_block_as_json);
     }
+    anyhow::ensure!(
+        cached_blocks.len() == provider_blocks.len(),
+        "requested {} blocks from JRPC provider but got {} in response",
+        cached_blocks.len(),
+        provider_blocks.len()
+    );
     Ok(provider_blocks)
 }
 
