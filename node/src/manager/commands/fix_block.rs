@@ -87,10 +87,53 @@ pub async fn by_range(
     chain_store: Arc<ChainStore>,
     ethereum_adapter: &EthereumAdapter,
     range: &str,
+    logger: &Logger,
 ) -> anyhow::Result<()> {
-    todo!("resolve a range of block numbers into a collection of blocks");
-    todo!("call `compare_blocks` function");
-    todo!("report")
+    // Resolve a range of block numbers into a collection of blocks hashes
+    let range = range.parse::<ranges::Range>()?;
+    let cached_blocks = {
+        let mut hashes_and_blocks: Vec<(H256, Value)> = Vec::new();
+        let (min, max) = range.min_max()?;
+        let max: i32 = match max {
+            Some(x) => x,
+            // When we have an open upper bound, we must check the number of the chain head block
+            None => {
+                let chain_head = chain_store.chain_head_ptr()?;
+                match chain_head {
+                    Some(block_ptr) => block_ptr.number,
+                    None => {
+                        anyhow::bail!("Could not find the chain head for {}", chain_store.chain)
+                    }
+                }
+            }
+        };
+        // FIXME: This is not performant. We could fix this by hitting the database only once.
+        for block_number in min..=max {
+            let block_hashes = chain_store.block_hashes_by_block_number(block_number)?;
+            let block_hash = get_single_item("block hash", block_hashes)?;
+
+            // Try to find a matching block from the store
+            let cached_blocks = chain_store.blocks(&[block_hash])?;
+            let cached_block = get_single_item("block", cached_blocks)?;
+
+            hashes_and_blocks.push((block_hash, cached_block))
+        }
+        hashes_and_blocks
+    };
+
+    // Compare and report
+    let comparison_results = compare_blocks(cached_blocks.as_slice(), &ethereum_adapter, logger)
+        .await
+        .context("Failed to compare blocks")?;
+
+    for comparison_result in comparison_results {
+        if let (hash, Some(diff)) = comparison_result {
+            eprintln!("block {hash} diverges from cache:");
+            eprintln!("{diff}");
+            chain_store.delete_blocks(&[&hash])?;
+        }
+    }
+    Ok(())
 }
 
 pub fn truncate(chain_store: Arc<ChainStore>, skip_confirmation: bool) -> anyhow::Result<()> {
@@ -200,5 +243,78 @@ where
         (Some(a), None) => Ok(a),
         (None, None) => bail!("Expected a single {name} but found none."),
         _ => bail!("Expected a single {name} but found multiple occurrences."),
+    }
+}
+
+mod ranges {
+    use graph::prelude::anyhow::{self, bail};
+    use std::str::FromStr;
+
+    pub(super) struct Range {
+        pub(super) lower_bound: Option<i32>,
+        pub(super) upper_bound: Option<i32>,
+        pub(super) inclusive: bool,
+    }
+
+    impl Range {
+        fn new(lower_bound: Option<i32>, upper_bound: Option<i32>, inclusive: bool) -> Self {
+            Self {
+                lower_bound,
+                upper_bound,
+                inclusive,
+            }
+        }
+
+        pub(super) fn min_max(&self) -> anyhow::Result<(i32, Option<i32>)> {
+            let min = match self.lower_bound {
+                None | Some(0) => 1,
+                Some(x) if x < 0 => anyhow::bail!("Negative block number"),
+                Some(x) => x,
+            };
+            let inclusive = if self.inclusive { 1 } else { 0 };
+            let max = self.upper_bound.map(|x| x + inclusive);
+            Ok((min, max))
+        }
+    }
+
+    impl FromStr for Range {
+        type Err = anyhow::Error;
+
+        fn from_str(s: &str) -> Result<Self, Self::Err> {
+            const INCLUSIVE: &str = "..=";
+            const EXCLUSIVE: &str = "..";
+            if !s.contains(INCLUSIVE) && !s.contains(EXCLUSIVE) {
+                bail!("Malformed range expression")
+            }
+            let (separator, inclusive) = if s.contains("..=") {
+                (INCLUSIVE, true)
+            } else {
+                (EXCLUSIVE, false)
+            };
+            let split: Vec<&str> = s.split(separator).collect();
+            let range = match split.as_slice() {
+                // open upper bounds are always inclusive
+                ["", ""] => Range::new(None, None, true),
+                [start, ""] => {
+                    let start: i32 = start.parse::<i32>()?;
+                    // open upper bounds are always inclusive
+                    Range::new(Some(start), None, true)
+                }
+                ["", end] => {
+                    let end = end.parse::<i32>()?;
+                    Range::new(None, Some(end), inclusive)
+                }
+                [start, end] => {
+                    let start: i32 = start.parse::<i32>()?;
+                    let end: i32 = end.parse::<i32>()?;
+                    if start > end {
+                        bail!("Invalid range")
+                    }
+                    Range::new(Some(start), Some(end), inclusive)
+                }
+                _ => bail!("Invalid range"),
+            };
+            Ok(range)
+        }
     }
 }

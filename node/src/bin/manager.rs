@@ -941,7 +941,9 @@ async fn main() -> anyhow::Result<()> {
                     ByNumber { number } => {
                         by_number(number, chain_store, &ethereum_adapter, &ctx.logger).await
                     }
-                    ByRange { range } => by_range(chain_store, &ethereum_adapter, &range).await,
+                    ByRange { range } => {
+                        by_range(chain_store, &ethereum_adapter, &range, &ctx.logger).await
+                    }
                     TruncateCache { no_confirm } => truncate(chain_store, no_confirm),
                 }
             } else {
