@@ -99,7 +99,7 @@ async fn compare_blocks(
 }
 
 /// Request provider for fresh blocks from the input set
-/// TODO: send renxoquests concurrently
+/// TODO: send renquests concurrently
 async fn fetch_provider_blocks(
     cached_blocks: &[(H256, Value)],
     ethereum_adapter: &EthereumAdapter,
