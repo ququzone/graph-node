@@ -1,26 +1,23 @@
 use config::PoolSize;
 use git_testament::{git_testament, render_testament};
+use graph::{data::graphql::effort::LoadManager, prelude::chrono, prometheus::Registry};
 use graph::{
-    data::graphql::effort::LoadManager,
     log::logger,
     prelude::{
         anyhow::{self, Context as AnyhowContextTrait},
-        chrono, info, o, slog, tokio, Logger, NodeId,
+        info, o, slog, tokio, Logger, NodeId,
     },
-    prometheus::Registry,
+    url::Url,
 };
 use graph_chain_ethereum::EthereumNetworks;
 use graph_core::MetricsRegistry;
 use graph_graphql::prelude::GraphQlRunner;
-use lazy_static::lazy_static;
-use structopt::StructOpt;
-
-use graph::{
-    log::logger,
-    prelude::{info, o, slog, tokio, Logger, NodeId},
-    url::Url,
+use graph_node::config::{self, Config as Cfg};
+use graph_node::manager::commands;
+use graph_node::{
+    chain::create_ethereum_networks, manager::PanicSubscriptionManager,
+    store_builder::StoreBuilder, MetricsContext,
 };
-use graph_node::{manager::PanicSubscriptionManager, store_builder::StoreBuilder, MetricsContext};
 use graph_store_postgres::{
     connection_pool::ConnectionPool, BlockStore, Shard, Store, SubgraphStore, SubscriptionManager,
     PRIMARY_SHARD,
@@ -588,8 +585,8 @@ impl Context {
             &self.logger,
             &self.node_id,
             &self.config,
-            self.fork_base,
-            self.registry,
+            self.fork_base.clone(),
+            self.registry.clone(),
         );
 
         for pool in pools.values() {
@@ -674,7 +671,6 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     }
-    let node = NodeId::new(&opt.node_id).map_err(|()| anyhow::anyhow!("Invalid node id"))?;
 
     let node = match NodeId::new(&opt.node_id) {
         Err(()) => {
