@@ -39,11 +39,19 @@ pub async fn by_hash(
     };
 
     // Compare and report
-    let comparison_results =
-        compare_blocks(&[(block_hash, cached_block)], &ethereum_adapter, logger)
+    let comparison_result = {
+        let result_set = compare_blocks(&[(block_hash, cached_block)], &ethereum_adapter, logger)
             .await
             .context("Failed to compare blocks")?;
-    todo!("report comparison results")
+        get_single_item("comparison", result_set)?
+    };
+
+    if let (hash, Some(diff)) = comparison_result {
+        eprintln!("block {hash} diverges from cache:");
+        eprintln!("{diff}");
+        chain_store.delete_blocks(&[&hash])?;
+    }
+    Ok(())
 }
 
 pub async fn by_number(
@@ -60,11 +68,19 @@ pub async fn by_number(
     let cached_block = get_single_item("block", cached_blocks)?;
 
     // Compare and report
-    let comparison_results =
-        compare_blocks(&[(block_hash, cached_block)], &ethereum_adapter, logger)
+    let comparison_result = {
+        let result_set = compare_blocks(&[(block_hash, cached_block)], &ethereum_adapter, logger)
             .await
             .context("Failed to compare blocks")?;
-    todo!("report comparison results")
+        get_single_item("comparison", result_set)?
+    };
+
+    if let (hash, Some(diff)) = comparison_result {
+        eprintln!("block {number} ({hash:?}) diverges from cache:");
+        eprintln!("{diff}");
+        chain_store.delete_blocks(&[&block_hash])?;
+    }
+    Ok(())
 }
 
 pub async fn by_range(
