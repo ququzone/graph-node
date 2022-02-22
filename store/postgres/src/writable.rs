@@ -507,7 +507,7 @@ impl Queue {
     }
 
     /// Wait for the background writer to finish processing queued entries
-    async fn wait(&self) -> Result<(), StoreError> {
+    async fn flush(&self) -> Result<(), StoreError> {
         self.queue
             .wait_empty()
             .await
@@ -754,10 +754,10 @@ impl Writer {
         }
     }
 
-    async fn wait(&self) -> Result<(), StoreError> {
+    async fn flush(&self) -> Result<(), StoreError> {
         match self {
             Writer::Sync { .. } => Ok(()),
-            Writer::Async(queue) => queue.wait().await,
+            Writer::Async(queue) => queue.flush().await,
         }
     }
 
@@ -926,7 +926,7 @@ impl WritableStoreTrait for WritableStore {
         self.store.input_schema()
     }
 
-    async fn wait(&self) -> Result<(), StoreError> {
-        self.writer.wait().await
+    async fn flush(&self) -> Result<(), StoreError> {
+        self.writer.flush().await
     }
 }
