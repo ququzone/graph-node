@@ -216,6 +216,7 @@ pub async fn transact_errors(
     let stopwatch_metrics = StopwatchMetrics::new(
         Logger::root(slog::Discard, o!()),
         deployment.hash.clone(),
+        "transact",
         metrics_registry.clone(),
     );
     store
@@ -282,6 +283,7 @@ pub async fn transact_entities_and_dynamic_data_sources(
     let stopwatch_metrics = StopwatchMetrics::new(
         Logger::root(slog::Discard, o!()),
         deployment.hash.clone(),
+        "transact",
         metrics_registry.clone(),
     );
     store
