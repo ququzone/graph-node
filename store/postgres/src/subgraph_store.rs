@@ -1092,7 +1092,7 @@ impl SubgraphStoreTrait for SubgraphStore {
             self.clone(),
             logger,
             site,
-            self.registry.clone(),
+            self.registry.cheap_clone(),
         )?))
     }
 
