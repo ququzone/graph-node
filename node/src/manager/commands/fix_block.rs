@@ -48,7 +48,7 @@ pub async fn by_range(
     // FIXME: This performs poorly.
     // TODO: This could be turned into async code
     for block_number in min..=max {
-        println!("Fixing block {block_number} of {max}...");
+        println!("Fixing block [{block_number}/{max}]");
         let block_hash = steps::resolve_block_hash_from_block_number(block_number, &chain_store)?;
         run(&block_hash, &chain_store, ethereum_adapter, logger).await?
     }
@@ -98,6 +98,7 @@ mod steps {
     ) -> anyhow::Result<H256> {
         let block_hashes = chain_store.block_hashes_by_block_number(number)?;
         helpers::get_single_item("block hash", block_hashes)
+            .with_context(|| format!("Failed to locate block number {} in store", number))
     }
 
     /// Queries the [`ChainStore`] for a cached block given a block hash.
@@ -112,6 +113,7 @@ mod steps {
             bail!("Could not find a block with hash={block_hash:?} in cache")
         }
         helpers::get_single_item("block", blocks)
+            .with_context(|| format!("Failed to locate block {} in store.", block_hash))
     }
 
     /// Fetches a block from a JRPC endpoint.
