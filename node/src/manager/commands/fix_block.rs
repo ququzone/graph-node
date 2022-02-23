@@ -1,22 +1,15 @@
-use futures::compat::Future01CompatExt;
 use graph::{
     anyhow::{bail, ensure},
     components::store::ChainStore as ChainStoreTrait,
     prelude::{
         anyhow::{self, anyhow, Context},
-        hex,
-        serde_json::{self, Value},
         web3::types::H256,
     },
     slog::Logger,
 };
 use graph_chain_ethereum::{EthereumAdapter, EthereumAdapterTrait};
 use graph_store_postgres::ChainStore;
-use json_structural_diff::{colorize as diff_to_string, JsonDiff};
-use std::{
-    io::{self, Write},
-    sync::Arc,
-};
+use std::sync::Arc;
 
 pub async fn by_hash(
     hash: &str,
@@ -24,34 +17,8 @@ pub async fn by_hash(
     ethereum_adapter: &EthereumAdapter,
     logger: &Logger,
 ) -> anyhow::Result<()> {
-    // Create a BlockHash value to parse the input as a propper block hash
-    let block_hash = {
-        let hash = hash.trim_start_matches("0x");
-        let hash = hex::decode(hash)
-            .with_context(|| format!("Cannot parse H256 value from string `{}`", hash))?;
-        H256::from_slice(&hash)
-    };
-
-    // Try to find a matching block from the store
-    let cached_block = {
-        let blocks = chain_store.blocks(&[block_hash])?;
-        get_single_item("block", blocks)?
-    };
-
-    // Compare and report
-    let comparison_result = {
-        let result_set = compare_blocks(&[(block_hash, cached_block)], &ethereum_adapter, logger)
-            .await
-            .context("Failed to compare blocks")?;
-        get_single_item("comparison", result_set)?
-    };
-
-    if let (hash, Some(diff)) = comparison_result {
-        eprintln!("block {hash} diverges from cache:");
-        eprintln!("{diff}");
-        chain_store.delete_blocks(&[&hash])?;
-    }
-    Ok(())
+    let block_hash = helpers::parse_block_hash(hash)?;
+    run(&block_hash, &chain_store, ethereum_adapter, logger).await
 }
 
 pub async fn by_number(
@@ -60,27 +27,8 @@ pub async fn by_number(
     ethereum_adapter: &EthereumAdapter,
     logger: &Logger,
 ) -> anyhow::Result<()> {
-    let block_hashes = chain_store.block_hashes_by_block_number(number)?;
-    let block_hash = get_single_item("block hash", block_hashes)?;
-
-    // Try to find a matching block from the store
-    let cached_blocks = chain_store.blocks(&[block_hash])?;
-    let cached_block = get_single_item("block", cached_blocks)?;
-
-    // Compare and report
-    let comparison_result = {
-        let result_set = compare_blocks(&[(block_hash, cached_block)], &ethereum_adapter, logger)
-            .await
-            .context("Failed to compare blocks")?;
-        get_single_item("comparison", result_set)?
-    };
-
-    if let (hash, Some(diff)) = comparison_result {
-        eprintln!("block {number} ({hash:?}) diverges from cache:");
-        eprintln!("{diff}");
-        chain_store.delete_blocks(&[&block_hash])?;
-    }
-    Ok(())
+    let block_hash = steps::resolve_block_hash_from_block_number(number, &chain_store)?;
+    run(&block_hash, &chain_store, ethereum_adapter, logger).await
 }
 
 pub async fn by_range(
@@ -91,53 +39,24 @@ pub async fn by_range(
 ) -> anyhow::Result<()> {
     // Resolve a range of block numbers into a collection of blocks hashes
     let range = range.parse::<ranges::Range>()?;
-    let cached_blocks = {
-        let mut hashes_and_blocks: Vec<(H256, Value)> = Vec::new();
-        let (min, max) = range.min_max()?;
-        let max: i32 = match max {
-            Some(x) => x,
-            // When we have an open upper bound, we must check the number of the chain head block
-            None => {
-                let chain_head = chain_store.chain_head_ptr()?;
-                match chain_head {
-                    Some(block_ptr) => block_ptr.number,
-                    None => {
-                        anyhow::bail!("Could not find the chain head for {}", chain_store.chain)
-                    }
-                }
-            }
-        };
-        // FIXME: This is not performant. We could fix this by hitting the database only once.
-        for block_number in min..=max {
-            let block_hashes = chain_store.block_hashes_by_block_number(block_number)?;
-            let block_hash = get_single_item("block hash", block_hashes)?;
-
-            // Try to find a matching block from the store
-            let cached_blocks = chain_store.blocks(&[block_hash])?;
-            let cached_block = get_single_item("block", cached_blocks)?;
-
-            hashes_and_blocks.push((block_hash, cached_block))
-        }
-        hashes_and_blocks
+    let (min, max) = range.min_max()?;
+    let max = match max {
+        // When we have an open upper bound, we must check the number of the chain head block
+        None => steps::find_chain_head(&chain_store)?,
+        Some(x) => x,
     };
-
-    // Compare and report
-    let comparison_results = compare_blocks(cached_blocks.as_slice(), &ethereum_adapter, logger)
-        .await
-        .context("Failed to compare blocks")?;
-
-    for comparison_result in comparison_results {
-        if let (hash, Some(diff)) = comparison_result {
-            eprintln!("block {hash} diverges from cache:");
-            eprintln!("{diff}");
-            chain_store.delete_blocks(&[&hash])?;
-        }
+    // FIXME: This performs poorly.
+    // TODO: This could be turned into async code
+    for block_number in min..=max {
+        println!("Fixing block {block_number} of {max}...");
+        let block_hash = steps::resolve_block_hash_from_block_number(block_number, &chain_store)?;
+        run(&block_hash, &chain_store, ethereum_adapter, logger).await?
     }
     Ok(())
 }
 
 pub fn truncate(chain_store: Arc<ChainStore>, skip_confirmation: bool) -> anyhow::Result<()> {
-    if !skip_confirmation && !prompt_for_confirmation()? {
+    if !skip_confirmation && !helpers::prompt_for_confirmation()? {
         println!("Aborting.");
         return Ok(());
     }
@@ -147,105 +66,168 @@ pub fn truncate(chain_store: Arc<ChainStore>, skip_confirmation: bool) -> anyhow
         .with_context(|| format!("Failed to truncate block cache for {}", chain_store.chain))
 }
 
-async fn compare_blocks(
-    cached_blocks: &[(H256, Value)],
+async fn run(
+    block_hash: &H256,
+    chain_store: &ChainStore,
     ethereum_adapter: &EthereumAdapter,
     logger: &Logger,
-) -> anyhow::Result<Vec<(H256, Option<String>)>> {
-    let provider_blocks = fetch_provider_blocks(cached_blocks, ethereum_adapter, logger).await?;
-    let pairs = cached_blocks.iter().zip(provider_blocks.iter());
-    diff_blocks(pairs)
+) -> anyhow::Result<()> {
+    let cached_block = steps::fetch_single_cached_block(block_hash, &chain_store)?;
+    let provider_block =
+        steps::fetch_single_provider_block(&block_hash, ethereum_adapter, logger).await?;
+    let diff = steps::diff_block_pair(&cached_block, &provider_block);
+    steps::report_difference(diff.as_deref(), &block_hash);
+    if diff.is_some() {
+        steps::delete_block(&block_hash, &chain_store)?;
+    }
+    Ok(())
 }
 
-/// Request provider for fresh blocks from the input set
-/// TODO: send renquests concurrently
-async fn fetch_provider_blocks(
-    cached_blocks: &[(H256, Value)],
-    ethereum_adapter: &EthereumAdapter,
-    logger: &Logger,
-) -> anyhow::Result<Vec<Value>> {
-    let mut provider_blocks = Vec::new();
-    for (hash, _block) in cached_blocks {
+mod steps {
+    use super::*;
+    use futures::compat::Future01CompatExt;
+    use graph::prelude::serde_json::{self, Value};
+    use json_structural_diff::{colorize as diff_to_string, JsonDiff};
+
+    /// Queries the [`ChainStore`] about the block hash for the given block number.
+    ///
+    /// Errors on a non-unary result.
+    pub(super) fn resolve_block_hash_from_block_number(
+        number: i32,
+        chain_store: &ChainStore,
+    ) -> anyhow::Result<H256> {
+        let block_hashes = chain_store.block_hashes_by_block_number(number)?;
+        helpers::get_single_item("block hash", block_hashes)
+    }
+
+    /// Queries the [`ChainStore`] for a cached block given a block hash.
+    ///
+    /// Errors on a non-unary result.
+    pub(super) fn fetch_single_cached_block(
+        block_hash: &H256,
+        chain_store: &ChainStore,
+    ) -> anyhow::Result<Value> {
+        let blocks = chain_store.blocks(&[*block_hash])?;
+        if blocks.is_empty() {
+            bail!("Could not find a block with hash={block_hash:?} in cache")
+        }
+        helpers::get_single_item("block", blocks)
+    }
+
+    /// Fetches a block from a JRPC endpoint.
+    ///
+    /// Errors on a non-unary result.
+    pub(super) async fn fetch_single_provider_block(
+        block_hash: &H256,
+        ethereum_adapter: &EthereumAdapter,
+        logger: &Logger,
+    ) -> anyhow::Result<Value> {
         let provider_block = ethereum_adapter
-            .block_by_hash(&logger, *hash)
+            .block_by_hash(&logger, *block_hash)
             .compat()
             .await
-            .context("failed to fetch block")?
-            .ok_or_else(|| anyhow!("JRPC provider found no block with hash {hash}"))?;
+            .with_context(|| format!("failed to fetch block {block_hash}"))?
+            .ok_or_else(|| anyhow!("JRPC provider found no block {block_hash}"))?;
         ensure!(
-            provider_block.hash == Some(*hash),
+            provider_block.hash == Some(*block_hash),
             "Provider responded with a different block hash"
         );
-        let provider_block_as_json = serde_json::to_value(provider_block)
-            .context("failed to parse provider block as a JSON value")?;
-        provider_blocks.push(provider_block_as_json);
+        serde_json::to_value(provider_block)
+            .context("failed to parse provider block as a JSON value")
     }
-    anyhow::ensure!(
-        cached_blocks.len() == provider_blocks.len(),
-        "requested {} blocks from JRPC provider but got {} in response",
-        cached_blocks.len(),
-        provider_blocks.len()
-    );
-    Ok(provider_blocks)
-}
 
-/// Compare the block hashes from our cache against the ones received from the JRPC provider.
-/// Returns a list of hashes diffs in text form, ready to be displayed to the user, in case the
-/// blocks are different.
-fn diff_blocks<'a, I>(pairs: I) -> anyhow::Result<Vec<(H256, Option<String>)>>
-where
-    I: Iterator<Item = (&'a (H256, Value), &'a Value)>,
-{
-    let mut comparison_results = Vec::new();
-    for ((hash, cached_block), provider_block) in pairs {
-        let provider_block = serde_json::to_value(provider_block)
-            .context("failed to parse provider block as a JSON value")?;
-        if cached_block != &provider_block {
-            let diff_result = JsonDiff::diff(cached_block, &provider_block, false);
-            // The diff result could potentially be a `Value::Null`, which is equivalent to not
-            // being different at all.
-            let json_diff = match diff_result.diff {
+    /// Compares two [`serde_json::Value`] values.
+    ///
+    /// If they are different, returns a user-friendly string ready to be displayed.
+    pub(super) fn diff_block_pair(a: &Value, b: &Value) -> Option<String> {
+        if a == b {
+            None
+        } else {
+            match JsonDiff::diff(a, &b, false).diff {
+                // The diff could potentially be a `Value::Null`, which is equivalent to not being
+                // different at all.
                 None | Some(Value::Null) => None,
                 Some(diff) => {
                     // Convert the JSON diff to a pretty-formatted text that will be displayed to
                     // the user
                     Some(diff_to_string(&diff, false))
                 }
-            };
-            comparison_results.push((*hash, json_diff));
+            }
         }
     }
-    Ok(comparison_results)
-}
 
-/// Asks users if they are certain about truncating the whole block cache.
-fn prompt_for_confirmation() -> anyhow::Result<bool> {
-    print!("This will delete all cached blocks.\nProceed? [y/N] ");
-    io::stdout().flush()?;
+    /// Prints the difference between two [`serde_json::Value`] values to the user.
+    pub(super) fn report_difference(difference: Option<&str>, hash: &H256) {
+        if let Some(diff) = difference {
+            eprintln!("block {hash} diverges from cache:");
+            eprintln!("{diff}");
+        } else {
+            println!("Cached block is equal to the same block from provider.")
+        }
+    }
 
-    let mut answer = String::new();
-    io::stdin().read_line(&mut answer)?;
-    answer.make_ascii_lowercase();
+    /// Attempts to delete a block from the block cache.
+    pub(super) fn delete_block(hash: &H256, chain_store: &ChainStore) -> anyhow::Result<()> {
+        println!("Deleting block {hash} from cache.");
+        chain_store.delete_blocks(&[&hash])?;
+        println!("Done.");
+        Ok(())
+    }
 
-    match answer.trim() {
-        "y" | "yes" => Ok(true),
-        _ => Ok(false),
+    /// Queries the [`ChainStore`] about the chain head.
+    pub(super) fn find_chain_head(chain_store: &ChainStore) -> anyhow::Result<i32> {
+        let chain_head = chain_store.chain_head_ptr()?;
+        if let Some(block_ptr) = chain_head {
+            Ok(block_ptr.number)
+        } else {
+            anyhow::bail!("Could not find the chain head for {}", chain_store.chain)
+        }
     }
 }
 
-/// Convenience function for extracting values from unary sets.
-fn get_single_item<I, T>(name: &'static str, collection: I) -> anyhow::Result<T>
-where
-    I: IntoIterator<Item = T>,
-{
-    let mut iterator = collection.into_iter();
-    match (iterator.next(), iterator.next()) {
-        (Some(a), None) => Ok(a),
-        (None, None) => bail!("Expected a single {name} but found none."),
-        _ => bail!("Expected a single {name} but found multiple occurrences."),
+mod helpers {
+    use super::*;
+    use graph::prelude::hex;
+    use std::io::{self, Write};
+
+    /// Tries to parse a [`H256`] from a hex string.
+    pub(super) fn parse_block_hash(hash: &str) -> anyhow::Result<H256> {
+        let hash = hash.trim_start_matches("0x");
+        let hash = hex::decode(hash)
+            .with_context(|| format!("Cannot parse H256 value from string `{}`", hash))?;
+        Ok(H256::from_slice(&hash))
+    }
+
+    /// Asks users if they are certain about truncating the whole block cache.
+    pub(super) fn prompt_for_confirmation() -> anyhow::Result<bool> {
+        print!("This will delete all cached blocks.\nProceed? [y/N] ");
+        io::stdout().flush()?;
+
+        let mut answer = String::new();
+        io::stdin().read_line(&mut answer)?;
+        answer.make_ascii_lowercase();
+
+        match answer.trim() {
+            "y" | "yes" => Ok(true),
+            _ => Ok(false),
+        }
+    }
+
+    /// Convenience function for extracting values from unary sets.
+    pub(super) fn get_single_item<I, T>(name: &'static str, collection: I) -> anyhow::Result<T>
+    where
+        I: IntoIterator<Item = T>,
+    {
+        let mut iterator = collection.into_iter();
+        match (iterator.next(), iterator.next()) {
+            (Some(a), None) => Ok(a),
+            (None, None) => bail!("Expected a single {name} but found none."),
+            _ => bail!("Expected a single {name} but found multiple occurrences."),
+        }
     }
 }
 
+/// Custom range type that supports being parsed from a string.
 mod ranges {
     use graph::prelude::anyhow::{self, bail};
     use std::str::FromStr;
@@ -267,7 +249,7 @@ mod ranges {
 
         pub(super) fn min_max(&self) -> anyhow::Result<(i32, Option<i32>)> {
             let min = match self.lower_bound {
-                None | Some(0) => 1,
+                None | Some(0) => 1, // Never include the genesis block
                 Some(x) if x < 0 => anyhow::bail!("Negative block number"),
                 Some(x) => x,
             };
