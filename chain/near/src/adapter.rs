@@ -24,6 +24,10 @@ impl bc::TriggerFilter<Chain> for TriggerFilter {
     ) {
         todo!()
     }
+
+    fn to_firehose_filter(self) -> Box<dyn prost::Message> {
+        todo!()
+    }
 }
 
 #[derive(Clone, Debug, Default)]

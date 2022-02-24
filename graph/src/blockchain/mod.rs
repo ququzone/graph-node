@@ -179,6 +179,8 @@ pub trait TriggerFilter<C: Blockchain>: Default + Clone + Send + Sync {
     fn extend<'a>(&mut self, data_sources: impl Iterator<Item = &'a C::DataSource> + Clone);
 
     fn node_capabilities(&self) -> C::NodeCapabilities;
+
+    fn to_firehose_filter(self) -> Box<dyn prost::Message>;
 }
 
 pub trait DataSource<C: Blockchain>:

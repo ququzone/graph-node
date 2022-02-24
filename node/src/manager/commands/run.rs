@@ -119,7 +119,7 @@ pub async fn run(
 
     let blockchain_map = Arc::new(blockchain_map);
     let subgraph_instance_manager = SubgraphInstanceManager::new(
-        &logger_factory,
+        logger_factory.clone(),
         subgraph_store.clone(),
         blockchain_map.clone(),
         metrics_registry.clone(),

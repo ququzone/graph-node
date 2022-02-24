@@ -1,0 +1,28 @@
+[general]
+
+[store]
+[store.primary]
+connection = "postgresql://graph-node:let-me-in@localhost:5432/graph-node"
+weight = 1
+pool_size = 10
+
+[chains]
+ingestor = "block_ingestor_node"
+[chains.mainnet]
+shard = "primary"
+protocol = "ethereum"
+provider = [
+  { label = "peering", url = "https://eth-mainnet.alchemyapi.io/v2/iemhQFg2k89zAO1-gSngWqkLHTZ-Byc_", features = [ "archive", "traces" ] },
+]
+
+[chains.rinkeby]
+shard = "primary"
+provider = [
+  { label = "rinkeby-0", url = "https://eth-rinkeby.alchemyapi.io/v2/MbPzjkEmyF891zBE51Q1c5M4IQAEXZ-9", features = [ "archive" ] }
+]
+
+
+[deployment]
+[[deployment.rule]]
+shard = "primary"
+indexers = [ "default" ]

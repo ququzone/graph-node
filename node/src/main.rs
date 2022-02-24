@@ -323,7 +323,7 @@ async fn main() {
         let static_filters = env::var_os("EXPERIMENTAL_STATIC_FILTERS").is_some();
 
         let subgraph_instance_manager = SubgraphInstanceManager::new(
-            &logger_factory,
+            logger_factory.clone(),
             network_store.subgraph_store(),
             blockchain_map.cheap_clone(),
             metrics_registry.clone(),
