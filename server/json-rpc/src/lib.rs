@@ -266,7 +266,7 @@ where
             .compat()
         });
 
-        let me = arc_self.clone();
+        let me = arc_self;
         let sender = task_sender.clone();
         handler.add_method("subgraph_reassign", move |params: Params| {
             let me = me.clone();

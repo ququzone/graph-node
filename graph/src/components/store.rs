@@ -1532,18 +1532,17 @@ impl EntityCache {
                     key.entity_id,
                 ));
             } else {
-                return Ok(());
+                Ok(())
             }
         }
 
         // Set the id if there isn't one yet, and make sure that a
         // previously set id agrees with the one in the `key`
         match entity.get("id") {
-            Some(Value::String(s)) => check_id(&key, &s)?,
+            Some(Value::String(s)) => check_id(&key, s)?,
             Some(Value::Bytes(b)) => check_id(&key, &b.to_string())?,
             Some(_) => {
                 // The validation will catch the type mismatch
-                ()
             }
             None => {
                 let value = self.store.input_schema().id_value(&key)?;
@@ -1760,7 +1759,7 @@ impl AttributeNames {
         if Self::is_meta_field(field_name) {
             return;
         }
-        self.insert(&field_name)
+        self.insert(field_name)
     }
 
     /// Adds a attribute name. Ignores meta fields.
