@@ -3,8 +3,11 @@ use ethabi::{Error as ABIError, Function, ParamType, Token};
 use futures::Future;
 use graph::blockchain::ChainIdentifier;
 use graph::env::env_var;
-use graph::firehose::BasicLogFilter;
+use graph::firehose::CallToFilter;
+use graph::firehose::LogFilter;
+use graph::firehose::MultiCallToFilter;
 use graph::firehose::MultiLogFilter;
+use graph::prelude::ethabi::ethereum_types::H160;
 use itertools::Itertools;
 use mockall::automock;
 use mockall::predicate::*;
@@ -164,12 +167,25 @@ impl bc::TriggerFilter<Chain> for TriggerFilter {
         }
     }
 
-    fn to_firehose_filter(self) -> Box<dyn prost::Message> {
-        let msg = MultiLogFilter {
-            basic_log_filters: self.log.into(),
+    fn to_firehose_filter(self) -> Vec<Box<dyn prost::Message>> {
+        let EthereumBlockFilter {
+            contract_addresses: _contract_addresses,
+            trigger_every_block,
+        } = self.block;
+
+        if trigger_every_block {
+            return Vec::new();
+        }
+
+        let calls = MultiCallToFilter {
+            call_filters: self.call.into(),
         };
 
-        Box::new(msg)
+        let log = MultiLogFilter {
+            log_filters: self.log.into(),
+        };
+
+        vec![Box::new(log), Box::new(calls)]
     }
 }
 
@@ -184,18 +200,28 @@ pub(crate) struct EthereumLogFilter {
     wildcard_events: HashSet<EventSignature>,
 }
 
-impl Into<Vec<BasicLogFilter>> for EthereumLogFilter {
-    fn into(self) -> Vec<BasicLogFilter> {
+impl Into<Vec<LogFilter>> for EthereumLogFilter {
+    fn into(self) -> Vec<LogFilter> {
         self.contracts_and_events_graph
             .all_edges()
-            .flat_map(|edge| match edge {
-                (LogFilterNode::Contract(addr), LogFilterNode::Event(sig), _) => {
-                    Some(BasicLogFilter {
-                        addresses: vec![addr.as_bytes().to_owned()],
-                        event_signatures: vec![sig.as_bytes().to_owned()],
-                    })
-                }
-                _ => None,
+            .fold(
+                HashMap::<H160, HashSet<H256>>::new(),
+                |mut acc, edge| match edge {
+                    (LogFilterNode::Contract(addr), LogFilterNode::Event(sig), _) => {
+                        let entry = acc.entry(addr).or_insert(HashSet::new());
+                        entry.insert(sig);
+                        acc
+                    }
+                    _ => acc,
+                },
+            )
+            .iter()
+            .map(|(addr, sigs)| LogFilter {
+                addresses: vec![addr.as_bytes().to_owned()],
+                event_signatures: sigs
+                    .iter()
+                    .map(|sig| sig.as_bytes().to_owned())
+                    .collect_vec(),
             })
             .collect()
     }
@@ -353,6 +379,37 @@ pub(crate) struct EthereumCallFilter {
         HashMap<Address, (BlockNumber, HashSet<FunctionSelector>)>,
 
     pub wildcard_signatures: HashSet<FunctionSelector>,
+}
+
+impl Into<Vec<CallToFilter>> for EthereumCallFilter {
+    fn into(self) -> Vec<CallToFilter> {
+        if self.is_empty() {
+            return Vec::new();
+        }
+
+        let EthereumCallFilter {
+            contract_addresses_function_signatures,
+            wildcard_signatures,
+        } = self;
+
+        let mut filters: Vec<CallToFilter> = contract_addresses_function_signatures
+            .into_iter()
+            .map(|(addr, (_, sigs))| CallToFilter {
+                addresses: vec![addr.as_bytes().to_owned()],
+                signatures: sigs.into_iter().map(|x| x.to_vec()).collect_vec(),
+            })
+            .collect();
+
+        filters.push(CallToFilter {
+            addresses: vec![],
+            signatures: wildcard_signatures
+                .into_iter()
+                .map(|x| x.to_vec())
+                .collect_vec(),
+        });
+
+        filters
+    }
 }
 
 impl EthereumCallFilter {
@@ -528,12 +585,12 @@ pub(crate) struct EthereumBlockFilter {
     pub trigger_every_block: bool,
 }
 
-impl Into<Vec<BasicLogFilter>> for EthereumBlockFilter {
-    fn into(self) -> Vec<BasicLogFilter> {
+impl Into<Vec<LogFilter>> for EthereumBlockFilter {
+    fn into(self) -> Vec<LogFilter> {
         self.contract_addresses
             .iter()
             .dedup_by(|x, y| x.1 == y.1)
-            .map(|x| BasicLogFilter {
+            .map(|x| LogFilter {
                 addresses: vec![x.1.as_bytes().to_vec()],
                 event_signatures: vec![],
             })
