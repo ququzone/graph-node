@@ -98,13 +98,16 @@ where
     L: LinkResolver + Clone,
 {
     pub fn new(
-        logger_factory: LoggerFactory,
+        logger_factory: &LoggerFactory,
         subgraph_store: Arc<S>,
         chains: Arc<BlockchainMap>,
         metrics_registry: Arc<M>,
         link_resolver: Arc<L>,
         static_filters: bool,
     ) -> Self {
+        let logger = logger_factory.component_logger("SubgraphInstanceManager", None);
+        let logger_factory = logger_factory.with_parent(logger.clone());
+
         SubgraphInstanceManager {
             logger_factory,
             subgraph_store,
