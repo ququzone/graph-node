@@ -11,6 +11,8 @@ use graph::prelude::ethabi::ethereum_types::H160;
 use itertools::Itertools;
 use mockall::automock;
 use mockall::predicate::*;
+use prost::Message;
+use prost_types::Any;
 use std::cmp;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -167,25 +169,35 @@ impl bc::TriggerFilter<Chain> for TriggerFilter {
         }
     }
 
-    fn to_firehose_filter(self) -> Vec<Box<dyn prost::Message>> {
+    fn to_firehose_filter(&self) -> Vec<prost_types::Any> {
         let EthereumBlockFilter {
             contract_addresses: _contract_addresses,
             trigger_every_block,
-        } = self.block;
+        } = self.block.clone();
 
         if trigger_every_block {
             return Vec::new();
         }
 
-        let calls = MultiCallToFilter {
-            call_filters: self.call.into(),
-        };
+        let mut filters = vec![];
 
-        let log = MultiLogFilter {
-            log_filters: self.log.into(),
-        };
+        let call_filters: Vec<CallToFilter> = self.call.clone().into();
+        if !call_filters.is_empty() {
+            filters.push(Any {
+                type_url: "sf.ethereum.transform.v1.MultiCallToFilter".into(),
+                value: MultiCallToFilter { call_filters }.encode_to_vec(),
+            });
+        }
 
-        vec![Box::new(log), Box::new(calls)]
+        let log_filters: Vec<LogFilter> = self.log.clone().into();
+        if !log_filters.is_empty() {
+            filters.push(Any {
+                type_url: "sf.ethereum.transform.v1.MultiLogFilter".into(),
+                value: MultiLogFilter { log_filters }.encode_to_vec(),
+            })
+        }
+
+        filters
     }
 }
 

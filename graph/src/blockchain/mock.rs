@@ -242,7 +242,7 @@ impl<C: Blockchain> TriggerFilter<C> for MockTriggerFilter {
         todo!()
     }
 
-    fn to_firehose_filter(self) -> Vec<Box<dyn prost::Message>> {
+    fn to_firehose_filter(&self) -> Vec<prost_types::Any> {
         todo!()
     }
 }

@@ -5,6 +5,7 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 use tonic::Status;
 
+use crate::blockchain::TriggerFilter;
 use crate::prelude::*;
 use crate::util::backoff::ExponentialBackoff;
 
@@ -120,6 +121,7 @@ fn stream_blocks<C: Blockchain, F: FirehoseMapper<C>>(
                 start_block_num: start_block_num as i64,
                 start_cursor: latest_cursor.clone(),
                 fork_steps: vec![StepNew as i32, StepUndo as i32],
+                transforms: filter.to_firehose_filter(),
                 ..Default::default()
             }).await;
 
