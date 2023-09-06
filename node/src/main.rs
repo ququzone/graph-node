@@ -165,7 +165,8 @@ async fn main() {
 
     let node_id = NodeId::new(opt.node_id.clone())
         .expect("Node ID must be between 1 and 63 characters in length");
-    let query_only = config.query_only(&node_id);
+    let query_only = opt.disable_block_ingestor || config.query_only(&node_id);
+    info!(logger, "Starting query only node: {}", query_only);
 
     // Obtain subgraph related command-line arguments
     let subgraph = opt.subgraph.clone();
